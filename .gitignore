@@ -1,0 +1,15 @@
+.gradle/
+.kotlin/
+build/
+*/build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+captures/
+.cxx/
+*.hprof
+
+# Debug/ADB screenshots captured during development; not project assets.
+watch_*.png
+watch-*.png
