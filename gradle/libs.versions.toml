@@ -3,8 +3,8 @@ agp = "8.6.1"
 kotlin = "2.2.20"
 core-ktx = "1.13.1"
 activity-compose = "1.9.2"
-compose-bom = "2024.06.00"
-wear-compose = "1.4.0"
+compose-bom = "2025.08.00"
+wear-compose = "1.5.0"
 media3 = "1.4.1"
 horologist = "0.7.15"
 tiles = "1.4.1"
@@ -26,7 +26,7 @@ compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = 
 compose-material-icons-core = { group = "androidx.compose.material", name = "material-icons-core" }
 compose-material = { group = "androidx.compose.material", name = "material" }
 compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
-wear-compose-material = { group = "androidx.wear.compose", name = "compose-material", version.ref = "wear-compose" }
+wear-compose-material3 = { group = "androidx.wear.compose", name = "compose-material3", version.ref = "wear-compose" }
 wear-compose-foundation = { group = "androidx.wear.compose", name = "compose-foundation", version.ref = "wear-compose" }
 wear-compose-navigation = { group = "androidx.wear.compose", name = "compose-navigation", version.ref = "wear-compose" }
 media3-session = { group = "androidx.media3", name = "media3-session", version.ref = "media3" }

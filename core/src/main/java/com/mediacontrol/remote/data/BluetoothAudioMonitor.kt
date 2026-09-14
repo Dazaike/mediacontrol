@@ -32,7 +32,7 @@ data class BtAudioState(
 /** Exact one-line status rendered on Now Playing. */
 fun btStatusLine(state: BtAudioState): String =
     if (state.connected) "🎧 ${state.deviceName ?: "Unknown device"} / Connected"
-    else "🎧 No audio device"
+    else ""
 
 /**
  * Banner transition, pure for testability. Fires only on a connected→disconnected

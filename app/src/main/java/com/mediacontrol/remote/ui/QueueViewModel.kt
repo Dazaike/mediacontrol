@@ -13,6 +13,7 @@ import com.mediacontrol.remote.data.QueueTrack
 
 data class QueueUiState(
     val currentTitle: String?,
+    val currentArtist: String?,
     val queueTitle: String,
     val items: List<QueueTrack>,
     val available: Boolean,
@@ -27,6 +28,7 @@ class QueueViewModel(private val mediaSource: CombinedMediaSource) : ViewModel()
     ) { session, queueList, title ->
         QueueUiState(
             currentTitle = session?.title ?: session?.appLabel,
+            currentArtist = session?.artist,
             queueTitle = title,
             items = queueList,
             available = queueList.isNotEmpty(),
@@ -34,7 +36,7 @@ class QueueViewModel(private val mediaSource: CombinedMediaSource) : ViewModel()
     }.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
-        QueueUiState(null, "Queue", emptyList(), false),
+        QueueUiState(null, null, "Queue", emptyList(), false),
     )
 
     fun skipTo(queueId: Long) {

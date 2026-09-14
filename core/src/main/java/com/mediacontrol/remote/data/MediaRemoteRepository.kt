@@ -15,6 +15,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import kotlinx.coroutines.sync.Mutex
 import androidx.core.content.ContextCompat
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -24,6 +26,7 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.mediacontrol.remote.service.MediaListenerService
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -162,12 +165,35 @@ class MediaRemoteRepository(private val appContext: Context) {
     @Volatile
     private var cachedLastPackage: String? = null
 
+    private val refreshMutex = Mutex()
+    @Volatile private var refreshQueued = false
+    private var lastPublished: ControlledSession? = null
+    private var lastPublishAt = 0L
+    private var cachedArtBytes: ByteArray? = null
+    private var cachedArtGen = -1
+    private var cachedArtW = -1
+    private var cachedArtH = -1
+
     init {
         scope.launch(Dispatchers.IO) { cachedLastPackage = readStoredPackage() }
     }
 
     fun refreshSessions() {
-        scope.launch { refreshInternal() }
+        refreshQueued = true
+        scope.launch {
+            if (!refreshMutex.tryLock()) return@launch
+            try {
+                while (true) {
+                    refreshQueued = false
+                    refreshInternal()
+                    if (!refreshQueued) break
+                    delay(200)
+                }
+            } finally {
+                refreshMutex.unlock()
+                if (refreshQueued) refreshSessions()
+            }
+        }
     }
 
     /** Optimistic: persists even when the package has no live session yet. */
@@ -190,11 +216,11 @@ class MediaRemoteRepository(private val appContext: Context) {
 
     suspend fun play(): Boolean = dispatch { c3, fw ->
         if (c3 != null) c3.play() else fw.transportControls.play()
-    }
+    }.also { if (it) emitPlaying(true) }
 
     suspend fun pause(): Boolean = dispatch { c3, fw ->
         if (c3 != null) c3.pause() else fw.transportControls.pause()
-    }
+    }.also { if (it) emitPlaying(false) }
 
     suspend fun togglePlayPause(): Boolean {
         val playing = withContext(Dispatchers.Main.immediate) {
@@ -290,15 +316,33 @@ class MediaRemoteRepository(private val appContext: Context) {
         _player.value = null
         attachedPackage = null
         _liveSessions.value = emptyList()
+        lastPublished = null
+        lastPublishAt = 0L
+        cachedArtBytes = null
+        cachedArtGen = -1
         _activeSession.value = null
     }
 
+    private fun emitPlaying(playing: Boolean) {
+        val current = _activeSession.value ?: return
+        if (current.isPlaying == playing) return
+        val next = current.copy(isPlaying = playing)
+        lastPublished = next
+        lastPublishAt = SystemClock.elapsedRealtime()
+        _activeSession.value = next
+    }
+
     private fun publishSnapshot() {
-        _activeSession.value = try {
+        val snap = try {
             framework?.toSnapshot()
         } catch (e: Exception) {
             null
         }
+        val now = SystemClock.elapsedRealtime()
+        if (!shouldPublishSession(lastPublished, snap, now - lastPublishAt)) return
+        lastPublished = snap
+        lastPublishAt = now
+        _activeSession.value = snap
     }
 
     private fun activeFrameworkControllers(): List<FrameworkController> =
@@ -410,17 +454,26 @@ class MediaRemoteRepository(private val appContext: Context) {
         }
         val artworkBytes: ByteArray? = try {
             rawBitmap?.let { raw ->
-                val scaled = if (raw.width > 320 || raw.height > 320) {
-                    Bitmap.createScaledBitmap(raw, 320, 320, true)
-                } else raw
-                val stream = ByteArrayOutputStream()
-                scaled.compress(Bitmap.CompressFormat.JPEG, 80, stream)
-                stream.toByteArray()
+                val gen = raw.generationId
+                if (gen == cachedArtGen && raw.width == cachedArtW && raw.height == cachedArtH) {
+                    cachedArtBytes
+                } else {
+                    val scaled = if (raw.width > 320 || raw.height > 320) {
+                        Bitmap.createScaledBitmap(raw, 320, 320, true)
+                    } else raw
+                    val stream = ByteArrayOutputStream()
+                    scaled.compress(Bitmap.CompressFormat.JPEG, 70, stream)
+                    val bytes = stream.toByteArray()
+                    cachedArtBytes = bytes
+                    cachedArtGen = gen
+                    cachedArtW = raw.width
+                    cachedArtH = raw.height
+                    bytes
+                }
             }
         } catch (e: Exception) {
             null
         }
-        // Unknown duration stays 0; UI renders an indeterminate ring, never divides by zero.
         val duration = md?.getLong(MediaMetadata.METADATA_KEY_DURATION)?.takeIf { it > 0 } ?: 0L
         return ControlledSession(
             packageName = pkg,

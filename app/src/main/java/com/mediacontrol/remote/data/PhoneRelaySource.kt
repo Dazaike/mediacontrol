@@ -3,6 +3,7 @@ package com.mediacontrol.remote.data
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import android.os.SystemClock
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
@@ -53,6 +54,10 @@ class PhoneRelaySource(private val appContext: Context) : DataClient.OnDataChang
     val artworkBytes: StateFlow<ByteArray?> = _artworkBytes.asStateFlow()
     private val _liveSessions = MutableStateFlow<List<SessionCandidate>>(emptyList())
     val liveSessions: StateFlow<List<SessionCandidate>> = _liveSessions.asStateFlow()
+    private var lastSession: ControlledSession? = null
+    private var lastSessionAt = 0L
+    @Volatile private var cachedNodeId: String? = null
+
     init {
         Log.i(TAG, "Initializing PhoneRelaySource")
         try {
@@ -77,12 +82,12 @@ class PhoneRelaySource(private val appContext: Context) : DataClient.OnDataChang
     }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
-        Log.i(TAG, "onDataChanged called with ${dataEvents.count} events")
         for (event in dataEvents) {
             if (event.dataItem.uri.path != RelayProtocol.PATH_MEDIA_STATE) continue
             if (event.type == DataEvent.TYPE_CHANGED) {
                 processDataMap(DataMapItem.fromDataItem(event.dataItem).dataMap)
             } else {
+                lastSession = null
                 _relaySession.value = null
             }
         }
@@ -90,8 +95,13 @@ class PhoneRelaySource(private val appContext: Context) : DataClient.OnDataChang
 
     private fun processDataMap(map: DataMap) {
         val session = mapToSession(map)
-        Log.i(TAG, "ProcessDataMap: session=${session?.title}, vol=${map.getInt(RelayProtocol.KEY_VOLUME)}")
-        _relaySession.value = session
+        val now = SystemClock.elapsedRealtime()
+        val prev = lastSession
+        if (shouldPublishSession(prev, session, now - lastSessionAt)) {
+            lastSession = session
+            lastSessionAt = now
+            _relaySession.value = session
+        }
 
         val vol = map.getInt(RelayProtocol.KEY_VOLUME, -1)
         val maxVol = map.getInt(RelayProtocol.KEY_MAX_VOLUME, -1)
@@ -102,10 +112,11 @@ class PhoneRelaySource(private val appContext: Context) : DataClient.OnDataChang
         val qArtists = map.getStringArrayList(RelayProtocol.KEY_QUEUE_ARTISTS)
         val qIds = map.getLongArray(RelayProtocol.KEY_QUEUE_IDS)
         if (qTitles != null && qIds != null && qTitles.size == qIds.size) {
-            _queue.value = qIds.indices.map { i ->
+            val next = qIds.indices.map { i ->
                 val artist = qArtists?.getOrNull(i)?.takeIf { it.isNotEmpty() }
                 QueueTrack(qIds[i], qTitles[i], artist)
             }
+            if (next != _queue.value) _queue.value = next
         }
         val qTitle = map.getString(RelayProtocol.KEY_QUEUE_TITLE)
         if (!qTitle.isNullOrEmpty()) {
@@ -116,7 +127,7 @@ class PhoneRelaySource(private val appContext: Context) : DataClient.OnDataChang
         val liveLabels = map.getStringArrayList(RelayProtocol.KEY_LIVE_LABELS)
         val livePlaying = map.getIntegerArrayList(RelayProtocol.KEY_LIVE_PLAYING)
         if (livePkgs != null && liveLabels != null && livePkgs.size == liveLabels.size) {
-            _liveSessions.value = livePkgs.indices.map { i ->
+            val next = livePkgs.indices.map { i ->
                 SessionCandidate(
                     packageName = livePkgs[i],
                     appLabel = liveLabels[i],
@@ -124,47 +135,72 @@ class PhoneRelaySource(private val appContext: Context) : DataClient.OnDataChang
                     updateTimeMs = 0L,
                 )
             }
+            if (next != _liveSessions.value) _liveSessions.value = next
         }
 
         val btName = map.getString(RelayProtocol.KEY_BT_DEVICE)?.takeIf { it.isNotEmpty() }
         val btConnected = map.getBoolean(RelayProtocol.KEY_BT_CONNECTED, false)
-        _btAudioState.value = BtAudioState(btName, btConnected, if (btConnected) "A2DP" else null)
+        val bt = BtAudioState(btName, btConnected, if (btConnected) "A2DP" else null)
+        if (bt != _btAudioState.value) _btAudioState.value = bt
 
         val artAsset = map.getAsset(RelayProtocol.KEY_ART_ASSET)
-        if (artAsset != null) {
-            scope.launch {
-                try {
-                    val fd = Wearable.getDataClient(appContext).getFdForAsset(artAsset).await()
-                    val bytes = fd.inputStream.use { it.readBytes() }
+        if (artAsset == null) {
+            if (_artworkBytes.value != null) _artworkBytes.value = null
+            return
+        }
+        val sameTrack = prev != null && session != null &&
+            prev.packageName == session.packageName &&
+            prev.title == session.title &&
+            prev.artist == session.artist
+        if (sameTrack && _artworkBytes.value != null) return
+        scope.launch {
+            try {
+                val fd = Wearable.getDataClient(appContext).getFdForAsset(artAsset).await()
+                val bytes = fd.inputStream.use { it.readBytes() }
+                val current = _artworkBytes.value
+                if (current == null || !current.contentEquals(bytes)) {
                     _artworkBytes.value = bytes
-                    Log.i(TAG, "Loaded artwork asset: ${bytes.size} bytes")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to load artwork asset: ${e.message}")
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load artwork asset: ${e.message}")
             }
-        } else {
-            _artworkBytes.value = null
         }
     }
 
     fun sendCommand(cmd: RelayCommand) {
         scope.launch {
+            val payload = cmd.encode()
+            var id = cachedNodeId
+            if (id == null) {
+                id = try {
+                    Wearable.getNodeClient(appContext).connectedNodes.await().firstOrNull()?.id
+                } catch (e: Exception) {
+                    null
+                }
+                cachedNodeId = id
+            }
+            if (id == null) return@launch
             try {
-                val nodes = Wearable.getNodeClient(appContext).connectedNodes.await()
-                Log.i(TAG, "Sending command $cmd to ${nodes.size} connected nodes")
-                val payload = cmd.encode()
-                nodes.forEach { node ->
+                Wearable.getMessageClient(appContext)
+                    .sendMessage(id, RelayProtocol.PATH_MEDIA_CMD, payload)
+                    .await()
+            } catch (e: Exception) {
+                cachedNodeId = null
+                val retry = try {
+                    Wearable.getNodeClient(appContext).connectedNodes.await().firstOrNull()?.id
+                } catch (e2: Exception) {
+                    null
+                }
+                if (retry != null) {
+                    cachedNodeId = retry
                     try {
                         Wearable.getMessageClient(appContext)
-                            .sendMessage(node.id, RelayProtocol.PATH_MEDIA_CMD, payload)
+                            .sendMessage(retry, RelayProtocol.PATH_MEDIA_CMD, payload)
                             .await()
-                        Log.i(TAG, "Sent command $cmd to node ${node.displayName} (${node.id})")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to send command to node ${node.id}: ${e.message}")
+                    } catch (e3: Exception) {
+                        Log.e(TAG, "Failed to send command: ${e3.message}")
                     }
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to query nodes: ${e.message}")
             }
         }
     }

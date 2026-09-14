@@ -31,6 +31,9 @@ class PhoneApp : Application(), RepoHost {
     val audio: AudioManager by lazy { getSystemService(AudioManager::class.java) }
     val btMonitor: BluetoothAudioMonitor by lazy { BluetoothAudioMonitor(this) }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    @Volatile private var lastPushKey: String? = null
+    private var lastArtBytes: ByteArray? = null
+    private var lastArtAsset: Asset? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -39,13 +42,13 @@ class PhoneApp : Application(), RepoHost {
         btMonitor.start()
         scope.launch {
             repo.activeSession.collect { session ->
-                Log.i(TAG, "Observed activeSession change: pkg=${session?.packageName}, title=${session?.title}, playing=${session?.isPlaying}")
+                Log.d(TAG, "activeSession pkg=${session?.packageName} playing=${session?.isPlaying}")
                 pushState(session)
             }
         }
         scope.launch {
             btMonitor.state.collect { btState ->
-                Log.i(TAG, "Observed btState change: device=${btState.deviceName}, connected=${btState.connected}")
+                Log.d(TAG, "btState device=${btState.deviceName} connected=${btState.connected}")
                 pushState(repo.activeSession.value)
             }
         }
@@ -120,6 +123,21 @@ class PhoneApp : Application(), RepoHost {
                 val livePlaying = ArrayList(liveList.map { if (it.isPlaying) 1 else 0 })
 
                 val btState = btMonitor.state.value
+                val artBytes = session?.artworkBytes
+                val key = buildString {
+                    append(session?.packageName).append('|')
+                    append(session?.title).append('|')
+                    append(session?.artist).append('|')
+                    append(session?.isPlaying).append('|')
+                    append(session?.durationMs).append('|')
+                    append(currentVol).append('/').append(maxVol).append('|')
+                    append(qTitle).append('|').append(queueIds.contentHashCode()).append('|')
+                    append(livePkgs).append('|')
+                    append(btState.deviceName).append('|').append(btState.connected).append('|')
+                    append(artBytes?.size ?: 0)
+                }
+                if (key == lastPushKey) return@launch
+                lastPushKey = key
 
                 val putRequest = PutDataMapRequest.create(RelayProtocol.PATH_MEDIA_STATE).apply {
                     dataMap.putBoolean(RelayProtocol.KEY_HAS_SESSION, session != null)
@@ -129,38 +147,42 @@ class PhoneApp : Application(), RepoHost {
                     dataMap.putBoolean(RelayProtocol.KEY_PLAYING, session?.isPlaying ?: false)
                     dataMap.putLong(RelayProtocol.KEY_POS, session?.positionMs ?: 0L)
                     dataMap.putLong(RelayProtocol.KEY_DUR, session?.durationMs ?: 0L)
-
-                    // Volume:
                     dataMap.putInt(RelayProtocol.KEY_VOLUME, currentVol)
                     dataMap.putInt(RelayProtocol.KEY_MAX_VOLUME, maxVol)
-
-                    // Queue:
                     dataMap.putStringArrayList(RelayProtocol.KEY_QUEUE, queueTitles)
                     dataMap.putStringArrayList(RelayProtocol.KEY_QUEUE_ARTISTS, queueArtists)
                     dataMap.putLongArray(RelayProtocol.KEY_QUEUE_IDS, queueIds)
                     dataMap.putString(RelayProtocol.KEY_QUEUE_TITLE, qTitle)
-
-                    // Bluetooth audio device:
                     dataMap.putString(RelayProtocol.KEY_BT_DEVICE, btState.deviceName ?: "")
                     dataMap.putBoolean(RelayProtocol.KEY_BT_CONNECTED, btState.connected)
-                    // Every live audible session on the phone (Players screen "other apps"):
                     dataMap.putStringArrayList(RelayProtocol.KEY_LIVE_PKGS, livePkgs)
                     dataMap.putStringArrayList(RelayProtocol.KEY_LIVE_LABELS, liveLabels)
                     dataMap.putIntegerArrayList(RelayProtocol.KEY_LIVE_PLAYING, livePlaying)
-                    // Album art Asset:
-                    session?.artworkBytes?.let { bytes ->
-                        dataMap.putAsset(RelayProtocol.KEY_ART_ASSET, Asset.createFromBytes(bytes))
+                    artAssetFor(artBytes)?.let { asset ->
+                        dataMap.putAsset(RelayProtocol.KEY_ART_ASSET, asset)
                     }
-
-                    // Changing timestamp forces Play Services to broadcast onDataChanged every time:
-                    dataMap.putLong("timestamp", System.currentTimeMillis())
                 }.asPutDataRequest().setUrgent()
 
-                val result = Wearable.getDataClient(this@PhoneApp).putDataItem(putRequest).await()
-                Log.i(TAG, "pushState success: uri=${result.uri}, vol=$currentVol/$maxVol, queueSize=${queueTitles.size}, bt=${btState.deviceName}")
+                Wearable.getDataClient(this@PhoneApp).putDataItem(putRequest).await()
             } catch (e: Exception) {
                 Log.e(TAG, "pushState error: ${e.message}", e)
             }
         }
+    }
+
+    private fun artAssetFor(bytes: ByteArray?): Asset? {
+        if (bytes == null) {
+            lastArtBytes = null
+            lastArtAsset = null
+            return null
+        }
+        val cached = lastArtAsset
+        if (cached != null && (bytes === lastArtBytes || lastArtBytes?.contentEquals(bytes) == true)) {
+            return cached
+        }
+        val asset = Asset.createFromBytes(bytes)
+        lastArtBytes = bytes
+        lastArtAsset = asset
+        return asset
     }
 }

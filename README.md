@@ -6,11 +6,11 @@ live queue, volume, and Bluetooth-audio status synced over the Wearable Data Lay
 ## Modules
 
 - **`app`** (minSdk 30) — the Wear OS watch app. 100% Kotlin, built with Jetpack
-  Compose for Wear OS (`androidx.wear.compose.material`/`.foundation`/`.navigation`).
+  Compose for Wear OS Material 3 (`androidx.wear.compose.material3` / `.foundation` / `.navigation`).
   Never plays media locally — it's strictly a remote for whatever is playing on the
   paired phone.
-  - Now Playing screen with a 2-page swipeable layout: transport controls (play/pause,
-    skip, volume, queue) on the first page, app-switching and settings on the second.
+  - Now Playing: album-art backdrop, hold-to-seek bar, and transport controls; swipe
+    for volume, queue, apps, and settings.
   - Players screen: switch between known media apps (Spotify, YouTube Music, Pocket
     Casts, Samsung Music) or any other app currently holding an active media session
     on the phone.

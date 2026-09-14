@@ -39,6 +39,7 @@ class NowPlayingViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NowPlayingUiState.Loading)
 
     val artworkBytes: StateFlow<ByteArray?> = mediaSource.artworkBytes
+
     val statusLine: StateFlow<String> = mediaSource.btAudioState
         .map { btStatusLine(it) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), btStatusLine(mediaSource.btAudioState.value))
@@ -76,6 +77,10 @@ class NowPlayingViewModel(
 
     fun next() {
         viewModelScope.launch { mediaSource.next() }
+    }
+
+    fun seekTo(positionMs: Long) {
+        viewModelScope.launch { mediaSource.seekTo(positionMs) }
     }
 }
 

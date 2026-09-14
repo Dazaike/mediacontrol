@@ -3,12 +3,11 @@ package com.mediacontrol.remote.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.wear.compose.material.Colors
-import androidx.wear.compose.material.MaterialTheme
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.MotionScheme
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
@@ -29,17 +28,8 @@ fun NavGraph(mediaSource: CombinedMediaSource) {
     val appContext = remember(context) { context.applicationContext }
     val themeVm: ThemeViewModel = viewModel(factory = ThemeViewModelFactory(appContext))
     val accent by themeVm.accent.collectAsStateWithLifecycle()
-    val colors = remember(accent) {
-        Colors(
-            primary = accent.primary,
-            primaryVariant = accent.primary,
-            secondary = accent.secondary,
-            secondaryVariant = accent.secondary,
-            onPrimary = Color.White,
-            onSecondary = Color.Black,
-        )
-    }
-    MaterialTheme(colors = colors) {
+    val colorScheme = remember(accent) { accent.toColorScheme() }
+    MaterialTheme(colorScheme = colorScheme, motionScheme = MotionScheme.standard()) {
         SwipeDismissableNavHost(
             navController = navController,
             startDestination = Routes.NOW_PLAYING,
@@ -47,17 +37,16 @@ fun NavGraph(mediaSource: CombinedMediaSource) {
             composable(Routes.NOW_PLAYING) {
                 val vm: NowPlayingViewModel =
                     viewModel(factory = NowPlayingViewModelFactory(mediaSource))
-                val statusLine by vm.statusLine.collectAsStateWithLifecycle()
-                val banner by vm.banner.collectAsStateWithLifecycle()
+                val onOpenPlayers = remember(navController) { { navController.navigate(Routes.PLAYERS) } }
+                val onOpenVolume = remember(navController) { { navController.navigate(Routes.VOLUME) } }
+                val onOpenQueue = remember(navController) { { navController.navigate(Routes.QUEUE) } }
+                val onOpenSettings = remember(navController) { { navController.navigate(Routes.SETTINGS) } }
                 NowPlayingScreen(
                     vm = vm,
-                    onOpenPlayers = { navController.navigate(Routes.PLAYERS) },
-                    onOpenVolume = { navController.navigate(Routes.VOLUME) },
-                    onOpenQueue = { navController.navigate(Routes.QUEUE) },
-                    onOpenSettings = { navController.navigate(Routes.SETTINGS) },
-                    statusLine = statusLine,
-                    banner = banner,
-                    onDismissBanner = { vm.dismissBanner() },
+                    onOpenPlayers = onOpenPlayers,
+                    onOpenVolume = onOpenVolume,
+                    onOpenQueue = onOpenQueue,
+                    onOpenSettings = onOpenSettings,
                 )
             }
             composable(Routes.VOLUME) {

@@ -2,8 +2,10 @@ package com.mediacontrol.remote.ui
 
 import android.content.Context
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.wear.compose.material3.ColorScheme
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -24,6 +26,20 @@ enum class AccentColor(val label: String, val primary: Color, val secondary: Col
     CORAL(label = "Coral", primary = Color(0xFFE2543A), secondary = Color(0xFFFF9C86)),
     MONOCHROME(label = "Monochrome", primary = Color(0xFF6B6B6B), secondary = Color(0xFFC7C7C7)),
 }
+
+/** Maps this accent onto a Wear Material 3 [ColorScheme], leaving remaining tokens at defaults. */
+fun AccentColor.toColorScheme(): ColorScheme = ColorScheme(
+    primary = primary,
+    primaryDim = lerp(primary, Color.Black, 0.22f),
+    primaryContainer = lerp(primary, Color.Black, 0.55f),
+    onPrimary = Color.White,
+    onPrimaryContainer = Color.White,
+    secondary = secondary,
+    secondaryDim = lerp(secondary, Color.Black, 0.22f),
+    secondaryContainer = lerp(secondary, Color.Black, 0.55f),
+    onSecondary = Color.Black,
+    onSecondaryContainer = Color.White,
+)
 
 private const val THEME_PREFS = "watch_theme_prefs"
 private const val KEY_ACCENT = "accent_color"

@@ -53,9 +53,9 @@ class BtBannerTest {
     }
 
     @Test
-    fun `disconnected line shows no device`() {
+    fun `disconnected line is empty`() {
         assertEquals(
-            "🎧 No audio device",
+            "",
             btStatusLine(BtAudioState(deviceName = null, connected = false, profile = null)),
         )
     }

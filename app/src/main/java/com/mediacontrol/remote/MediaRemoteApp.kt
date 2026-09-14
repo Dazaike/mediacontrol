@@ -20,16 +20,23 @@ class MediaRemoteApp : Application() {
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var lastSurfacePush = 0L
+    private var lastPkg: String? = null
+    private var lastTitle: String? = null
+    private var lastPlaying: Boolean? = null
 
     override fun onCreate() {
         super.onCreate()
         // Push Tile + complication refresh on session change from the phone,
-        // throttled to ≥2s. Drops (not coalesces) bursts; Tile freshness interval covers stragglers.
+        // throttled to ≥10s. Drops (not coalesces) bursts; Tile freshness interval covers stragglers.
         appScope.launch {
             mediaSource.activeSession.collect {
+                if (it?.packageName == lastPkg && it?.title == lastTitle && it?.isPlaying == lastPlaying) return@collect
                 val now = SystemClock.elapsedRealtime()
-                if (now - lastSurfacePush < 2_000) return@collect
+                if (now - lastSurfacePush < 10_000) return@collect
                 lastSurfacePush = now
+                lastPkg = it?.packageName
+                lastTitle = it?.title
+                lastPlaying = it?.isPlaying
                 try {
                     TileService.getUpdater(this@MediaRemoteApp)
                         .requestUpdate(MediaTileService::class.java)

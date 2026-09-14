@@ -12,8 +12,8 @@ android {
         applicationId = "com.mediacontrol.remote"
         minSdk = 30
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.0.1"
     }
 
     buildTypes {
@@ -50,14 +50,11 @@ dependencies {
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.material.icons.core)
     implementation(libs.compose.material.icons.extended)
-    implementation(libs.compose.material)
-    implementation(libs.wear.compose.material)
+    implementation(libs.wear.compose.material3)
     implementation(libs.wear.compose.foundation)
     implementation(libs.wear.compose.navigation)
     implementation(libs.media3.session)
     implementation(libs.media3.ui)
-    implementation(libs.horologist.media.ui)
-    implementation(libs.horologist.audio.ui)
     implementation(libs.wear.tiles)
     implementation(libs.protolayout)
     implementation(libs.wear.complications.datasource)
