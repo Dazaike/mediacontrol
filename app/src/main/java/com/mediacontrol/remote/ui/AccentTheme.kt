@@ -3,6 +3,7 @@ package com.mediacontrol.remote.ui
 import android.content.Context
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.wear.compose.material3.ColorScheme
@@ -39,28 +40,37 @@ enum class AccentColor(val label: String, val primary: Color, val secondary: Col
  * also drives the volume level indicator; the play button overrides its own fill at
  * the call site instead of dimming the token for everyone.
  */
-fun AccentColor.toColorScheme(): ColorScheme = ColorScheme(
-    primary = lerp(primary, Color.White, 0.10f),
-    primaryDim = primary,
-    primaryContainer = lerp(primary, Color.Black, 0.70f),
-    onPrimary = Color.White,
-    onPrimaryContainer = Color.White,
-    secondary = secondary,
-    secondaryDim = secondary,
-    secondaryContainer = lerp(secondary, Color.Black, 0.70f),
-    onSecondary = Color.White,
-    onSecondaryContainer = Color.White,
-    tertiary = secondary,
-    tertiaryDim = secondary,
-    tertiaryContainer = lerp(secondary, Color.Black, 0.70f),
-    onTertiary = Color.White,
-    onTertiaryContainer = Color.White,
-    surfaceContainerLow = lerp(primary, Color.Black, 0.86f),
-    surfaceContainer = lerp(primary, Color.Black, 0.78f),
-    surfaceContainerHigh = lerp(primary, Color.Black, 0.68f),
-    onSurface = Color.White,
-    onSurfaceVariant = secondary,
-)
+fun AccentColor.toColorScheme(): ColorScheme {
+    val accent = lerp(primary, Color.White, 0.10f)
+    // Filled buttons fill with `primary`/`secondary` and draw their label, secondary
+    // label and icon with `onPrimary`/`onSecondary`. A pale accent (Monochrome is pure
+    // white) makes those fills light, so a hardcoded white label renders an unreadable
+    // solid blob — as the Queue screen's current-track row did.
+    val onAccent = if (accent.luminance() > 0.45f) Color.Black else Color.White
+    val onSecondaryAccent = if (secondary.luminance() > 0.45f) Color.Black else Color.White
+    return ColorScheme(
+        primary = accent,
+        primaryDim = primary,
+        primaryContainer = lerp(primary, Color.Black, 0.70f),
+        onPrimary = onAccent,
+        onPrimaryContainer = Color.White,
+        secondary = secondary,
+        secondaryDim = secondary,
+        secondaryContainer = lerp(secondary, Color.Black, 0.70f),
+        onSecondary = onSecondaryAccent,
+        onSecondaryContainer = Color.White,
+        tertiary = secondary,
+        tertiaryDim = secondary,
+        tertiaryContainer = lerp(secondary, Color.Black, 0.70f),
+        onTertiary = onSecondaryAccent,
+        onTertiaryContainer = Color.White,
+        surfaceContainerLow = lerp(primary, Color.Black, 0.86f),
+        surfaceContainer = lerp(primary, Color.Black, 0.78f),
+        surfaceContainerHigh = lerp(primary, Color.Black, 0.68f),
+        onSurface = Color.White,
+        onSurfaceVariant = secondary,
+    )
+}
 
 private const val THEME_PREFS = "watch_theme_prefs"
 private const val KEY_ACCENT = "accent_color"

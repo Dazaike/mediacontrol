@@ -13,3 +13,4 @@ captures/
 # Debug/ADB screenshots captured during development; not project assets.
 watch_*.png
 watch-*.png
+shot*.png

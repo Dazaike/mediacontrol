@@ -83,13 +83,19 @@ class NowPlayingViewModel(
 
     private var rotaryAccum = 0f
 
-    /** Returns true when a volume step was actually applied (caller fires haptics). */
+    /**
+     * Returns true when a volume step was actually applied (caller fires haptics).
+     *
+     * The rotary reports scroll pixels, where a clockwise turn scrolls a list *down*
+     * and so comes through positive. Volume has the opposite convention — clockwise
+     * means louder — hence the negated step.
+     */
     fun onRotary(pixels: Float, stepPx: Float): Boolean {
         rotaryAccum += pixels
         val steps = (rotaryAccum / stepPx).toInt()
         if (steps == 0) return false
         rotaryAccum -= steps * stepPx
-        nudgeVolume(steps)
+        nudgeVolume(-steps)
         return true
     }
 

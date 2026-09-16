@@ -3,6 +3,17 @@ package com.mediacontrol.remote.ui
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.view.ViewConfiguration
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -56,6 +67,7 @@ import androidx.wear.compose.material3.ButtonGroup
 import androidx.wear.compose.material3.ButtonGroupScope
 import androidx.wear.compose.material3.FilledIconButton
 import androidx.wear.compose.material3.FilledTonalIconButton
+import androidx.wear.compose.material3.HorizontalPageIndicator
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.IconButtonDefaults
 import androidx.wear.compose.material3.LevelIndicator
@@ -86,13 +98,35 @@ fun NowPlayingScreen(
     onOpenSettings: () -> Unit,
 ) {
     val uiState by vm.uiState.collectAsStateWithLifecycle()
-    val onToggle = remember(vm) { { vm.toggle() } }
-    val onPrevious = remember(vm) { { vm.previous() } }
-    val onNext = remember(vm) { { vm.next() } }
-    val onSeek = remember(vm) { { pos: Long -> vm.seekTo(pos) } }
-    val onSoundcore = remember(vm) { { mode: SoundcoreMode -> vm.setSoundcoreMode(mode) } }
-    val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
+    // Every transport action ticks: on a watch the screen is often out of view, so
+    // touch is the only confirmation that a tap registered.
+    val onToggle = remember(vm, haptics) {
+        {
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            vm.toggle()
+        }
+    }
+    val onPrevious = remember(vm, haptics) {
+        {
+            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            vm.previous()
+        }
+    }
+    val onNext = remember(vm, haptics) {
+        {
+            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            vm.next()
+        }
+    }
+    val onSeek = remember(vm) { { pos: Long -> vm.seekTo(pos) } }
+    val onSoundcore = remember(vm, haptics) {
+        { mode: SoundcoreMode ->
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            vm.setSoundcoreMode(mode)
+        }
+    }
+    val context = LocalContext.current
     val stepPx = remember(context) {
         ViewConfiguration.get(context).scaledVerticalScrollFactor.takeIf { it > 0f } ?: 48f
     }
@@ -153,6 +187,8 @@ fun NowPlayingScreen(
         }
         // Curved clock riding the top bezel; screen-level so it survives page swipes.
         TimeText()
+        // Two pages are not otherwise discoverable; the indicator fades itself out.
+        HorizontalPageIndicator(pagerState = pagerState)
         VolumeOverlay(vm)
     }
 }
@@ -161,13 +197,16 @@ fun NowPlayingScreen(
 @Composable
 private fun BoxScope.VolumeOverlay(vm: NowPlayingViewModel) {
     val visible by vm.volumeVisible.collectAsStateWithLifecycle()
-    if (!visible) return
     val volume by vm.volume.collectAsStateWithLifecycle()
     val maxVolume by vm.maxVolume.collectAsStateWithLifecycle()
-    LevelIndicator(
-        value = { volume.toFloat() / maxVolume.coerceAtLeast(1).toFloat() },
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(150)),
+        exit = fadeOut(tween(350)),
         modifier = Modifier.align(Alignment.CenterStart),
-    )
+    ) {
+        LevelIndicator(value = { volume.toFloat() / maxVolume.coerceAtLeast(1).toFloat() })
+    }
 }
 
 @Composable
@@ -241,23 +280,37 @@ private fun ReadyContent(
                     size = 20.dp,
                 )
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleSmall,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                artist?.let {
-                    Text(
-                        text = it,
-                        style = MaterialTheme.typography.bodyExtraSmall,
-                        modifier = Modifier.padding(top = 3.dp),
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                // Keyed on the track so a change fades/slides rather than snapping.
+                // Long titles scroll instead of ellipsising.
+                AnimatedContent(
+                    targetState = title to artist,
+                    transitionSpec = {
+                        (fadeIn(tween(220)) + slideInVertically { it / 3 })
+                            .togetherWith(fadeOut(tween(160)))
+                    },
+                    label = "track",
+                ) { (trackTitle, trackArtist) ->
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = trackTitle,
+                            style = MaterialTheme.typography.titleSmall,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
+                        )
+                        trackArtist?.let {
+                            Text(
+                                text = it,
+                                style = MaterialTheme.typography.bodyExtraSmall,
+                                modifier = Modifier
+                                    .padding(top = 3.dp)
+                                    .basicMarquee(iterations = Int.MAX_VALUE),
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
             }
 
@@ -299,10 +352,19 @@ private fun ReadyContent(
                         .weight(1.3f)
                         .height(TransportPlaySize),
                 ) {
-                    Icon(
-                        if (playing) MediaIcons.Pause else MediaIcons.PlayArrow,
-                        contentDescription = if (playing) "Pause" else "Play",
-                    )
+                    AnimatedContent(
+                        targetState = playing,
+                        transitionSpec = {
+                            (fadeIn(tween(120)) + scaleIn(initialScale = 0.7f))
+                                .togetherWith(fadeOut(tween(120)) + scaleOut(targetScale = 0.7f))
+                        },
+                        label = "playPause",
+                    ) { isPlayingNow ->
+                        Icon(
+                            if (isPlayingNow) MediaIcons.Pause else MediaIcons.PlayArrow,
+                            contentDescription = if (isPlayingNow) "Pause" else "Play",
+                        )
+                    }
                 }
                 FilledTonalIconButton(
                     onClick = onNext,
@@ -350,18 +412,23 @@ private fun AlbumBackdrop(vm: NowPlayingViewModel) {
             }
         }
     }
-    val art = bitmap ?: return
-    Image(
-        bitmap = art,
-        contentDescription = null,
-        modifier = Modifier.fillMaxSize(),
-        contentScale = ContentScale.Crop,
-    )
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.72f)),
-    )
+    // Crossfade rather than snap: the decode lands asynchronously, so a hard swap
+    // reads as a flash on track change.
+    Crossfade(targetState = bitmap, animationSpec = tween(500), label = "artwork") { art ->
+        if (art != null) {
+            Image(
+                bitmap = art,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.72f)),
+            )
+        }
+    }
 }
 
 @Composable

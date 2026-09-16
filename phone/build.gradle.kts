@@ -11,13 +11,14 @@ android {
         applicationId = "com.mediacontrol.remote"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -39,6 +40,9 @@ dependencies {
     implementation(project(":core"))
     implementation(libs.core.ktx)
     implementation(libs.activity.ktx)
+    // play-services-wearable drags in fragment 1.1.0, which predates the
+    // ActivityResult APIs MainActivity uses for the BLUETOOTH_CONNECT prompt.
+    implementation(libs.fragment)
     implementation(libs.lifecycle.runtime.ktx)
     implementation(libs.play.services.wearable)
     implementation(libs.coroutines.play.services)

@@ -3,6 +3,60 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v1.0.2] - 2026-09-15
+
+Changes since `v1.0.1` (6297eaf): commit `e475aab` plus the working tree at release.
+
+### Added
+- Standalone Soundcore earbud control: `core` gains a pure `soundcore` package (frame
+  builder, wrapping checksum, partial/resync-tolerant `SoundcoreFrameReader`, per-model
+  `SoundcoreProfile` for Space One and P31i, legacy 4-byte fallback) with unit tests,
+  and `phone` gains `SoundcoreController` driving RFCOMM directly — vendor UUID with SPP
+  fallback, state read, patched sound-mode write, ACK with one retry (`e475aab`).
+- Real mode outcome relayed back to the watch as `scMode` / `scError` and rendered in the
+  swipe menu, replacing the previous optimistic "sent" text (`e475aab`).
+- User-curated Players list: the phone publishes `/media-apps`, the watch persists the
+  chosen apps, and a new Add-players screen toggles them (`e475aab`).
+- Phone launcher icons published as `/media-app-icons` Assets and drawn on the main
+  screen and in both player lists (`e475aab`).
+- Auto-start toggle on the idle screen — resumes the phone's last player when nothing is
+  playing, rate-limited to one attempt per 30s (`e475aab`).
+- Curved `TimeText` clock and a `HorizontalPageIndicator` on Now Playing.
+- Haptic feedback on every transport and Soundcore action.
+- Artwork crossfade, animated track-title and play/pause transitions, marquee titles, and
+  a fading volume overlay.
+- Runtime `BLUETOOTH_CONNECT` request on the phone companion (`e475aab`).
+
+### Changed
+- Now Playing recomposition is scoped to leaves: only `uiState` is collected at the root,
+  with artwork, volume, pending-launch and Soundcore status collected where they are drawn;
+  `ReadyContent` takes stable scalars so it can skip (`e475aab`).
+- `TrackProgress` draws through `drawBehind` and reads position inside lambdas, so the
+  per-second tick invalidates draw instead of re-laying out the screen (`e475aab`).
+- Dropped `animateWidth` from the transport row and swipe menu; `animatedShapes` kept.
+- Theme reworked: vivid accent palette, dark accent-tinted button fills with white glyphs,
+  white progress bar, smaller and raised transport row.
+- New launcher icon (screen, play triangle and seek bar) on both the watch and phone apps.
+- Release builds now run R8 with resource shrinking and keep rules for the reflectively
+  invoked DataLayer callbacks and protolayout builders; phone release is debug-signed so
+  the artifact installs.
+- `material-icons-extended` (87 MB jar for 12 icons) replaced with local vectors; unused
+  `coil-compose` and `media3-ui` dropped. APK 75.2 MB -> 6.2 MB.
+- Wearable `DataClient` listener registration moved off the main thread; cold start
+  4.16 s -> 0.90 s with no dropped frames at launch.
+- Bluetooth status line trimmed from "🎧 <device> / Connected" to "🎧 <device>".
+
+### Fixed
+- Bezel volume was inverted — clockwise now raises volume.
+- Filled buttons rendered as unreadable blocks on a pale accent: `onPrimary`/`onSecondary`
+  are now derived from fill luminance, repairing the Queue screen's current-track row and
+  the idle screen's "Open player" button.
+
+### Removed
+- CoreSwap dependency in every form: the launch path, the `SOUNDCORE_*` string constants,
+  and both `<package>` manifest query entries (`e475aab`).
+- Hardcoded player presets and the live-session auto-scan on the Players screen (`e475aab`).
+
 ## [v1.0.1] - 2026-09-14
 
 Changes since `v1.0.0` (755bd4a). Working tree at release; no interim commits.

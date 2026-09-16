@@ -1,28 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Media player glyph: a screen outline holding a play triangle, with a seek bar and
+  knob below it. Geometry is kept inside the 66dp adaptive-icon safe circle
+  (x/y 21..87 of the 108 viewport) so no mask crops it.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Previous: bar + left-pointing triangle -->
+    <!-- Screen outline -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineJoin="round"
+        android:pathData="M32,29 h44 a8,8 0 0 1 8,8 v34 a8,8 0 0 1 -8,8 h-44 a8,8 0 0 1 -8,-8 v-34 a8,8 0 0 1 8,-8 z" />
+    <!-- Play triangle -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M18,44 L22,44 L22,64 L18,64 Z" />
+        android:pathData="M47.5,40 L64,49.5 L47.5,59 Z" />
+    <!-- Seek bar -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:pathData="M31,71.5 H77" />
+    <!-- Seek knob -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M34,44 L34,64 L25,54 Z" />
-    <!-- Play: white circle with cut-out dark triangle -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M39,54 a15,15 0 1,0 30,0 a15,15 0 1,0 -30,0 Z" />
-    <path
-        android:fillColor="#1C1B28"
-        android:pathData="M48,47 L61,54 L48,61 Z" />
-    <!-- Next: right-pointing triangle + bar -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M74,44 L83,54 L74,64 Z" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M86,44 L90,44 L90,64 L86,64 Z" />
+        android:pathData="M39,67.3 a4.2,4.2 0 1 1 0,8.4 a4.2,4.2 0 1 1 0,-8.4 z" />
 </vector>
