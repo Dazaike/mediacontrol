@@ -223,6 +223,21 @@ class MediaRemoteRepository(private val appContext: Context) {
         return false
     }
 
+    /**
+     * Makes [packageName] the controlled player *without* starting playback. When the
+     * app has no live session yet there is nothing to control, so its activity is
+     * launched — but no play command is ever sent, so the user decides when audio
+     * starts. Contrast [playPackage], which deliberately forces playback.
+     */
+    suspend fun openPackage(packageName: String): Boolean {
+        attach(packageName)
+        if (activeFrameworkControllers().any { it.packageName == packageName }) return true
+        launchApp(packageName)
+        if (!awaitSession(packageName, 8_000)) return false
+        attach(packageName)
+        return true
+    }
+
     /** Resumes whatever package was last selected; no-op when nothing was ever selected. */
     suspend fun resumeLast(): Boolean = readLastPackage()?.let { playPackage(it) } ?: false
 

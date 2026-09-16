@@ -3,6 +3,30 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v1.0.3] - 2026-09-15
+
+No commits landed between `v1.0.2` and this release; the changes below are the working
+tree released as `v1.0.3`.
+
+### Fixed
+- Auto-start no longer fires on app launch. `PhoneRelaySource.relaySession` starts null,
+  so `uiState` reported `NoSession` for the second or two before the phone's first
+  DataItem arrived — even while the phone was playing — and the collector immediately
+  sent `Play`, which the phone turned into `resumeLast()` and launched an app. The idle
+  state now has to survive a 6s settle window (`distinctUntilChanged` + `collectLatest`),
+  so any session arriving first cancels the pending attempt.
+
+### Changed
+- Picking a player no longer starts playback. `RelayCommand.Select` maps to the new
+  `MediaRemoteRepository.openPackage()`, which attaches to the app's session — launching
+  its activity only when no session exists yet — and never sends a play command.
+  `playPackage()` still backs the auto-start toggle's `resumeLast()` path.
+- Idle copy follows the new semantics: "Starting X…" / "Couldn't start X" became
+  "Connecting to X…" / "Couldn't reach X".
+- Launcher icon geometry revised on both modules: smaller, more centred screen frame
+  (~49% of tile width, was ~60%) with the play triangle and seek bar rescaled to match,
+  still inside the 66dp adaptive-icon safe circle.
+
 ## [v1.0.2] - 2026-09-15
 
 Changes since `v1.0.1` (6297eaf): commit `e475aab` plus the working tree at release.

@@ -80,8 +80,11 @@ class PhoneApp : Application(), RepoHost {
                 is RelayCommand.Previous -> repo.previous()
                 is RelayCommand.Seek -> repo.seekTo(cmd.posMs)
                 is RelayCommand.Select -> {
-                    val started = repo.playPackage(cmd.pkg)
-                    Log.i(TAG, "playPackage ${cmd.pkg} started=$started")
+                    // Picking a player only takes control of it; playback is never
+                    // started here. Unattended resume lives behind the watch's
+                    // auto-start toggle, which sends Play, not Select.
+                    val attached = repo.openPackage(cmd.pkg)
+                    Log.i(TAG, "openPackage ${cmd.pkg} attached=$attached")
                     pushState(repo.activeSession.value)
                 }
                 is RelayCommand.VolumeUp -> {

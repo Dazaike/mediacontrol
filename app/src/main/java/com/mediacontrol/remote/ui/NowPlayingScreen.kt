@@ -219,13 +219,13 @@ private fun PendingOrIdle(
     val launching = pending
     when {
         launching != null && !launching.failed -> Text(
-            text = "Starting ${launching.label}…",
+            text = "Connecting to ${launching.label}…",
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center,
         )
 
         launching != null -> Text(
-            text = "Couldn't start ${launching.label}",
+            text = "Couldn't reach ${launching.label}",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.error,
             textAlign = TextAlign.Center,

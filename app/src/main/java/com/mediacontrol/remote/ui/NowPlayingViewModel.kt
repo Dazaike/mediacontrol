@@ -19,7 +19,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -134,14 +136,23 @@ class NowPlayingViewModel(
             }
         }
         // Auto-start: nothing playing + toggle on -> ask the phone to resume its last
-        // player. Rate-limited so a phone that cannot resume is not hammered.
+        // player.
+        //
+        // `relaySession` starts null, so uiState reports NoSession for the second or
+        // two before the phone's first DataItem lands — and briefly again whenever the
+        // relay drops. Acting on that transient launched an app the moment the watch
+        // app opened, even while the phone was already playing. collectLatest plus a
+        // settle delay means the idle state has to still hold after the relay has had
+        // time to report; any session arriving first cancels the pending attempt.
         viewModelScope.launch {
             var lastAttemptAt = 0L
             combine(uiState, autoStart) { state, on -> on && state is NowPlayingUiState.NoSession }
-                .collect { shouldStart ->
-                    if (!shouldStart) return@collect
+                .distinctUntilChanged()
+                .collectLatest { shouldStart ->
+                    if (!shouldStart) return@collectLatest
+                    delay(AUTO_START_SETTLE_MS)
                     val now = SystemClock.elapsedRealtime()
-                    if (now - lastAttemptAt < AUTO_START_COOLDOWN_MS) return@collect
+                    if (now - lastAttemptAt < AUTO_START_COOLDOWN_MS) return@collectLatest
                     lastAttemptAt = now
                     mediaSource.play()
                 }
@@ -166,6 +177,9 @@ class NowPlayingViewModel(
 }
 
 private const val AUTO_START_COOLDOWN_MS = 30_000L
+
+/** How long "nothing playing" must hold before auto-start believes it. */
+private const val AUTO_START_SETTLE_MS = 6_000L
 
 class NowPlayingViewModelFactory(
     private val mediaSource: CombinedMediaSource,
