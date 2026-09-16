@@ -20,6 +20,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -44,9 +45,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
@@ -97,7 +101,6 @@ fun NowPlayingScreen(
     onOpenQueue: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
-    val uiState by vm.uiState.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     // Every transport action ticks: on a watch the screen is often out of view, so
     // touch is the only confirmation that a tap registered.
@@ -136,6 +139,7 @@ fun NowPlayingScreen(
         HorizontalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize(),
+            beyondViewportPageCount = 0,
         ) { page ->
             Box(
                 modifier = Modifier
@@ -147,32 +151,48 @@ fun NowPlayingScreen(
                         }
                         true
                     }
+                    .then(
+                        if (page == 0) {
+                            // A plain upward swipe (no horizontal component) jumps
+                            // straight to the queue; awaitVerticalTouchSlopOrCancellation
+                            // backs off for a horizontal-dominant drag so page swipes
+                            // between Now Playing and More actions still work.
+                            Modifier.pointerInput(onOpenQueue) {
+                                val thresholdPx = 56.dp.toPx()
+                                var accumulated = 0f
+                                var triggered = false
+                                detectVerticalDragGestures(
+                                    onDragStart = {
+                                        accumulated = 0f
+                                        triggered = false
+                                    },
+                                    onVerticalDrag = { change, dragAmount ->
+                                        accumulated += dragAmount
+                                        if (!triggered && accumulated < -thresholdPx) {
+                                            triggered = true
+                                            change.consume()
+                                            onOpenQueue()
+                                        }
+                                    },
+                                )
+                            }
+                        } else {
+                            Modifier
+                        }
+                    )
                     .requestFocusOnHierarchyActive()
                     .focusable(),
                 contentAlignment = Alignment.Center,
             ) {
                 if (page == 0) {
-                    when (val state = uiState) {
-                        is NowPlayingUiState.Ready -> ReadyContent(
-                            packageName = state.session.packageName,
-                            title = state.session.title ?: state.session.appLabel,
-                            artist = state.session.artist,
-                            isPlaying = state.session.isPlaying,
-                            positionMs = state.session.positionMs,
-                            durationMs = state.session.durationMs,
-                            vm = vm,
-                            onToggle = onToggle,
-                            onPrevious = onPrevious,
-                            onNext = onNext,
-                            onSeek = onSeek,
-                        )
-
-                        else -> PendingOrIdle(
-                            vm = vm,
-                            loading = state is NowPlayingUiState.Loading,
-                            onOpenPlayers = onOpenPlayers,
-                        )
-                    }
+                    NowPlayingPage(
+                        vm = vm,
+                        onToggle = onToggle,
+                        onPrevious = onPrevious,
+                        onNext = onNext,
+                        onSeek = onSeek,
+                        onOpenPlayers = onOpenPlayers,
+                    )
                 } else {
                     MoreActionsContent(
                         vm = vm,
@@ -185,11 +205,43 @@ fun NowPlayingScreen(
                 }
             }
         }
-        // Curved clock riding the top bezel; screen-level so it survives page swipes.
-        TimeText()
-        // Two pages are not otherwise discoverable; the indicator fades itself out.
+        TimeText(modifier = Modifier.graphicsLayer())
         HorizontalPageIndicator(pagerState = pagerState)
         VolumeOverlay(vm)
+    }
+}
+
+/** Session collection lives here so a track change never recomposes the swipe-menu page. */
+@Composable
+private fun NowPlayingPage(
+    vm: NowPlayingViewModel,
+    onToggle: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onSeek: (Long) -> Unit,
+    onOpenPlayers: () -> Unit,
+) {
+    val uiState by vm.uiState.collectAsStateWithLifecycle()
+    when (val state = uiState) {
+        is NowPlayingUiState.Ready -> ReadyContent(
+            packageName = state.session.packageName,
+            title = state.session.title ?: state.session.appLabel,
+            artist = state.session.artist,
+            isPlaying = state.session.isPlaying,
+            positionMs = state.session.positionMs,
+            durationMs = state.session.durationMs,
+            vm = vm,
+            onToggle = onToggle,
+            onPrevious = onPrevious,
+            onNext = onNext,
+            onSeek = onSeek,
+        )
+
+        else -> PendingOrIdle(
+            vm = vm,
+            loading = state is NowPlayingUiState.Loading,
+            onOpenPlayers = onOpenPlayers,
+        )
     }
 }
 
@@ -282,6 +334,17 @@ private fun ReadyContent(
                 Spacer(modifier = Modifier.height(4.dp))
                 // Keyed on the track so a change fades/slides rather than snapping.
                 // Long titles scroll instead of ellipsising.
+                //
+                // Two deliberate constraints keep this off the critical path:
+                //  * A bounded iteration count. `Int.MAX_VALUE` meant the screen never
+                //    stopped producing frames — measured ~30fps of continuous redraw
+                //    while sitting untouched, with the GPU at 15ms/frame. The marquee
+                //    restarts on every track change (AnimatedContent rebuilds it), so
+                //    long titles still scroll when it matters, then the watch idles.
+                //  * Its own graphics layer. A marquee invalidates draw every frame and
+                //    Compose re-records the nearest enclosing layer — without one that is
+                //    the window root, so a scrolling title was re-recording the fullscreen
+                //    artwork and the curved TimeText too (42ms of draw per frame).
                 AnimatedContent(
                     targetState = title to artist,
                     transitionSpec = {
@@ -296,7 +359,9 @@ private fun ReadyContent(
                             style = MaterialTheme.typography.titleSmall,
                             textAlign = TextAlign.Center,
                             maxLines = 1,
-                            modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE),
+                            modifier = Modifier
+                                .graphicsLayer()
+                                .basicMarquee(iterations = MarqueeIterations),
                         )
                         trackArtist?.let {
                             Text(
@@ -304,7 +369,8 @@ private fun ReadyContent(
                                 style = MaterialTheme.typography.bodyExtraSmall,
                                 modifier = Modifier
                                     .padding(top = 3.dp)
-                                    .basicMarquee(iterations = Int.MAX_VALUE),
+                                    .graphicsLayer()
+                                    .basicMarquee(iterations = MarqueeIterations),
                                 textAlign = TextAlign.Center,
                                 maxLines = 1,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -416,16 +482,20 @@ private fun AlbumBackdrop(vm: NowPlayingViewModel) {
     // reads as a flash on track change.
     Crossfade(targetState = bitmap, animationSpec = tween(500), label = "artwork") { art ->
         if (art != null) {
+            // The dim rides along as a colour filter rather than a second full-screen
+            // Box: SrcAtop with 72% black is the same pixel result as compositing that
+            // Box on top, but it costs one full-screen fill per frame instead of two.
             Image(
                 bitmap = art,
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
-            )
-            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.72f)),
+                    .graphicsLayer(),
+                contentScale = ContentScale.Crop,
+                colorFilter = ColorFilter.tint(
+                    Color.Black.copy(alpha = 0.72f),
+                    BlendMode.SrcAtop,
+                ),
             )
         }
     }
@@ -754,3 +824,7 @@ private fun formatMs(ms: Long): String {
 private val TransportSideSize = 44.dp
 private val TransportPlaySize = 48.dp
 private val MenuButtonSize = 44.dp
+
+// Enough passes to read a long title through, then the screen is allowed to go
+// quiet. A track change restarts the marquee, which is when it is actually useful.
+private const val MarqueeIterations = 3

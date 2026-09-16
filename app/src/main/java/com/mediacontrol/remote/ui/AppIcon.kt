@@ -42,7 +42,17 @@ fun AppIcon(
             val decoded = withContext(Dispatchers.Default) {
                 load(packageName)?.let { bytes ->
                     try {
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                        var sample = 1
+                        val maxDim = maxOf(bounds.outWidth, bounds.outHeight)
+                        while (maxDim / sample > 48) sample *= 2
+                        val opts = BitmapFactory.Options().apply {
+                            inJustDecodeBounds = false
+                            inSampleSize = sample
+                            inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+                        }
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)?.asImageBitmap()
                     } catch (_: Exception) {
                         null
                     }

@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import java.util.concurrent.ConcurrentHashMap
 
@@ -39,6 +41,7 @@ data class PhoneAppInfo(val packageName: String, val label: String)
 class PhoneRelaySource(private val appContext: Context) : DataClient.OnDataChangedListener {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val stateMutex = Mutex()
 
     private val _relaySession = MutableStateFlow<ControlledSession?>(null)
     val relaySession: StateFlow<ControlledSession?> = _relaySession.asStateFlow()
@@ -77,35 +80,50 @@ class PhoneRelaySource(private val appContext: Context) : DataClient.OnDataChang
         // main thread during Application.onCreate and delays the first frame. The
         // prefetch runs after registration, so no update can slip through the gap.
         scope.launch {
-            try {
-                Wearable.getDataClient(appContext).addListener(this@PhoneRelaySource)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to register DataClient listener: ${e.message}")
+            stateMutex.withLock {
+                try {
+                    Wearable.getDataClient(appContext).addListener(this@PhoneRelaySource)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to register DataClient listener: ${e.message}")
+                }
+                prefetch(RelayProtocol.PATH_MEDIA_STATE) { processDataMap(it) }
+                prefetch(RelayProtocol.PATH_MEDIA_APPS) { processApps(it) }
+                prefetch(RelayProtocol.PATH_APP_ICONS) { processIcons(it) }
             }
-            prefetch(RelayProtocol.PATH_MEDIA_STATE) { processDataMap(it) }
-            prefetch(RelayProtocol.PATH_MEDIA_APPS) { processApps(it) }
-            prefetch(RelayProtocol.PATH_APP_ICONS) { processIcons(it) }
         }
     }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
+        data class Ev(val path: String?, val removed: Boolean, val map: DataMap?)
+        val events = ArrayList<Ev>(dataEvents.count)
         for (event in dataEvents) {
             val removed = event.type != DataEvent.TYPE_CHANGED
-            when (event.dataItem.uri.path) {
-                RelayProtocol.PATH_MEDIA_STATE -> {
-                    if (removed) {
-                        lastSession = null
-                        _relaySession.value = null
-                    } else {
-                        processDataMap(DataMapItem.fromDataItem(event.dataItem).dataMap)
+            events += Ev(
+                path = event.dataItem.uri.path,
+                removed = removed,
+                map = if (removed) null else DataMapItem.fromDataItem(event.dataItem).dataMap,
+            )
+        }
+        scope.launch {
+            stateMutex.withLock {
+                for (event in events) {
+                    when (event.path) {
+                        RelayProtocol.PATH_MEDIA_STATE -> {
+                            if (event.removed) {
+                                lastSession = null
+                                _relaySession.value = null
+                            } else {
+                                event.map?.let { processDataMap(it) }
+                            }
+                        }
+                        RelayProtocol.PATH_MEDIA_APPS -> {
+                            if (event.removed) _phoneApps.value = emptyList()
+                            else event.map?.let { processApps(it) }
+                        }
+                        RelayProtocol.PATH_APP_ICONS -> {
+                            if (!event.removed) event.map?.let { processIcons(it) }
+                        }
                     }
-                }
-                RelayProtocol.PATH_MEDIA_APPS -> {
-                    if (removed) _phoneApps.value = emptyList()
-                    else processApps(DataMapItem.fromDataItem(event.dataItem).dataMap)
-                }
-                RelayProtocol.PATH_APP_ICONS -> {
-                    if (!removed) processIcons(DataMapItem.fromDataItem(event.dataItem).dataMap)
                 }
             }
         }

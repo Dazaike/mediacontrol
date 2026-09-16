@@ -7,6 +7,7 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.ScalingLazyListScope
+import androidx.wear.compose.foundation.lazy.ScalingLazyListState
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 
 /**
@@ -20,11 +21,12 @@ import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 @Composable
 fun SecondaryScaffold(
     navController: NavHostController,
+    state: ScalingLazyListState = rememberScalingLazyListState(),
     content: ScalingLazyListScope.() -> Unit,
 ) {
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize(),
-        state = rememberScalingLazyListState(),
+        state = state,
         horizontalAlignment = Alignment.CenterHorizontally,
         content = content,
     )

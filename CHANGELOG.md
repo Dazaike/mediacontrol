@@ -3,6 +3,32 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v1.0.4] - 2026-09-16
+
+No commits landed between `v1.0.3` and this release; the changes below are the working
+tree released as `v1.0.4`.
+
+### Fixed
+- Infinite title/artist marquee (`basicMarquee(Int.MAX_VALUE)`) kept Now Playing producing
+  frames while idle (~30fps, 42ms/draw) because each tick re-recorded the fullscreen
+  artwork and curved `TimeText`. Marquee now stops after 3 passes; title, artist, artwork,
+  and `TimeText` each own a `graphicsLayer`.
+- Album-art dim was a second fullscreen `Box` composited on top of the image; now a single
+  `SrcAtop` colour filter on the `Image`.
+- `PhoneRelaySource.onDataChanged` ran DataMap parsing and session/queue rebuilds on the
+  GMS binder thread (main). Events are copied, then processed on IO behind a mutex shared
+  with prefetch.
+
+### Changed
+- Now Playing session state is collected only on page 0 (`NowPlayingPage`); the pager
+  sets `beyondViewportPageCount = 0` so the swipe-menu page is not composed offscreen.
+- App icons downsample to 48px RGB_565 instead of decoding full-size launcher PNGs.
+
+### Added
+- Upward swipe on Now Playing opens the queue.
+- Queue opens scrolled to the currently playing track (first snapshot only, so it does
+  not yank while browsing). `SecondaryScaffold` accepts an optional list state for this.
+
 ## [v1.0.3] - 2026-09-15
 
 No commits landed between `v1.0.2` and this release; the changes below are the working
