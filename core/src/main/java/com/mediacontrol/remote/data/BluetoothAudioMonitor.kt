@@ -29,9 +29,9 @@ data class BtAudioState(
     val profile: String?,
 )
 
-/** Exact one-line status rendered on Now Playing. */
+/** Exact one-line status rendered on Now Playing: the glyph carries the "connected" part. */
 fun btStatusLine(state: BtAudioState): String =
-    if (state.connected) "🎧 ${state.deviceName ?: "Unknown device"} / Connected"
+    if (state.connected) "🎧 ${state.deviceName ?: "Unknown device"}"
     else ""
 
 /**
@@ -191,6 +191,13 @@ class BluetoothAudioMonitor(private val appContext: Context) {
             return BtAudioState(it.displayName(), true, "A2DP")
         }
         return BtAudioState(null, false, null)
+    }
+
+    /** Currently connected BT audio devices; empty when the proxies are unbound or permission is missing. */
+    fun connectedDevices(): List<BluetoothDevice> {
+        if (!hasBtConnect()) return emptyList()
+        return (a2dpProxy?.connectedDevices.orEmpty() + leProxy?.connectedDevices.orEmpty())
+            .distinctBy { it.address }
     }
 
     private fun BluetoothDevice.displayName(): String =

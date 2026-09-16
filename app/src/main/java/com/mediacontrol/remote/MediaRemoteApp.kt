@@ -18,7 +18,7 @@ class MediaRemoteApp : Application() {
     val phoneRelay: PhoneRelaySource by lazy { PhoneRelaySource(this) }
     val mediaSource: CombinedMediaSource by lazy { CombinedMediaSource(this, phoneRelay) }
 
-    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var lastSurfacePush = 0L
     private var lastPkg: String? = null
     private var lastTitle: String? = null
@@ -26,8 +26,11 @@ class MediaRemoteApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        // Push Tile + complication refresh on session change from the phone,
-        // throttled to ≥10s. Drops (not coalesces) bursts; Tile freshness interval covers stragglers.
+        // Push Tile + complication refresh on session change from the phone, throttled
+        // to ≥10s. Drops (not coalesces) bursts; Tile freshness interval covers stragglers.
+        // Default, not Main: this is the first touch of [mediaSource], and building the
+        // relay stack (plus GMS/Tile lookups) on the main thread here costs first-frame
+        // latency for work no one is waiting on.
         appScope.launch {
             mediaSource.activeSession.collect {
                 if (it?.packageName == lastPkg && it?.title == lastTitle && it?.isPlaying == lastPlaying) return@collect

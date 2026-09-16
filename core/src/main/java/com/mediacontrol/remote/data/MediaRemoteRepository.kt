@@ -16,6 +16,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.KeyEvent
 import kotlinx.coroutines.sync.Mutex
 import androidx.core.content.ContextCompat
 import androidx.datastore.preferences.core.edit
@@ -159,7 +160,7 @@ class MediaRemoteRepository(private val appContext: Context) {
         }
 
     suspend fun skipToQueueItem(queueId: Long): Boolean = dispatch { _, fw ->
-        fw.transportControls.skipToQueueItem(queueId)
+        fw!!.transportControls.skipToQueueItem(queueId)
     }
 
     @Volatile
@@ -201,6 +202,63 @@ class MediaRemoteRepository(private val appContext: Context) {
         scope.launch { attach(packageName) }
     }
 
+    /**
+     * Starts playback for [packageName] from any state, including a locked screen:
+     * binds the app's media session service (no activity needed), then an explicit
+     * media-button broadcast, and only then a launcher-intent start.
+     */
+    suspend fun playPackage(packageName: String): Boolean {
+        attach(packageName)
+        if (play()) return true
+        sendMediaButtonPlay(packageName)
+        if (awaitSession(packageName, 3_000)) {
+            attach(packageName)
+            if (play()) return true
+        }
+        launchApp(packageName)
+        if (awaitSession(packageName, 8_000)) {
+            attach(packageName)
+            return play()
+        }
+        return false
+    }
+
+    /** Resumes whatever package was last selected; no-op when nothing was ever selected. */
+    suspend fun resumeLast(): Boolean = readLastPackage()?.let { playPackage(it) } ?: false
+
+    private suspend fun awaitSession(packageName: String, timeoutMs: Long): Boolean =
+        withTimeoutOrNull(timeoutMs) {
+            var found = false
+            while (!found) {
+                delay(400)
+                found = activeFrameworkControllers().any { it.packageName == packageName }
+            }
+            true
+        } ?: false
+
+    private fun sendMediaButtonPlay(packageName: String) {
+        listOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP).forEach { action ->
+            try {
+                appContext.sendBroadcast(
+                    Intent(Intent.ACTION_MEDIA_BUTTON)
+                        .setPackage(packageName)
+                        .putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(action, KeyEvent.KEYCODE_MEDIA_PLAY)),
+                )
+            } catch (e: Exception) {
+                // Package has no media-button receiver; the launcher fallback still applies.
+            }
+        }
+    }
+
+    private fun launchApp(packageName: String) {
+        try {
+            val intent = appContext.packageManager.getLaunchIntentForPackage(packageName) ?: return
+            appContext.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: Exception) {
+            // Blocked background launch; the bind/media-button paths already ran.
+        }
+    }
+
     fun saveLastPackage(packageName: String) {
         cachedLastPackage = packageName
         scope.launch(Dispatchers.IO) {
@@ -215,11 +273,11 @@ class MediaRemoteRepository(private val appContext: Context) {
     fun readLastPackage(): String? = cachedLastPackage
 
     suspend fun play(): Boolean = dispatch { c3, fw ->
-        if (c3 != null) c3.play() else fw.transportControls.play()
+        if (c3 != null) c3.play() else fw!!.transportControls.play()
     }.also { if (it) emitPlaying(true) }
 
     suspend fun pause(): Boolean = dispatch { c3, fw ->
-        if (c3 != null) c3.pause() else fw.transportControls.pause()
+        if (c3 != null) c3.pause() else fw!!.transportControls.pause()
     }.also { if (it) emitPlaying(false) }
 
     suspend fun togglePlayPause(): Boolean {
@@ -232,22 +290,24 @@ class MediaRemoteRepository(private val appContext: Context) {
     }
 
     suspend fun next(): Boolean = dispatch { c3, fw ->
-        if (c3 != null) c3.seekToNext() else fw.transportControls.skipToNext()
+        if (c3 != null) c3.seekToNext() else fw!!.transportControls.skipToNext()
     }
 
     suspend fun previous(): Boolean = dispatch { c3, fw ->
-        if (c3 != null) c3.seekToPrevious() else fw.transportControls.skipToPrevious()
+        if (c3 != null) c3.seekToPrevious() else fw!!.transportControls.skipToPrevious()
     }
 
     suspend fun seekTo(positionMs: Long): Boolean = dispatch { c3, fw ->
-        if (c3 != null) c3.seekTo(positionMs) else fw.transportControls.seekTo(positionMs)
+        if (c3 != null) c3.seekTo(positionMs) else fw!!.transportControls.seekTo(positionMs)
     }
 
-    private suspend fun dispatch(block: (MediaController?, FrameworkController) -> Unit): Boolean =
+    private suspend fun dispatch(block: (MediaController?, FrameworkController?) -> Unit): Boolean =
         withContext(Dispatchers.Main.immediate) {
-            val fw = framework ?: return@withContext false
+            val c3 = media3?.takeIf { it.isConnected }
+            val fw = framework
+            if (c3 == null && fw == null) return@withContext false
             try {
-                block(media3?.takeIf { it.isConnected }, fw)
+                block(c3, fw)
                 true
             } catch (e: Exception) {
                 false
@@ -284,16 +344,17 @@ class MediaRemoteRepository(private val appContext: Context) {
         val live = known ?: activeFrameworkControllers()
         _liveSessions.value = live.map { it.toCandidate() }
         val fw = live.firstOrNull { it.packageName == packageName }
-        if (fw == null) return // Optimistic select: pref kept, session stays null.
-        framework = fw
-        try {
-            fw.registerCallback(frameworkCallback, mainHandler)
-        } catch (e: Exception) {
-            // Proceed unobserved; next event-driven refresh still converges.
+        if (fw != null) {
+            framework = fw
+            try {
+                fw.registerCallback(frameworkCallback, mainHandler)
+            } catch (e: Exception) {
+                // Proceed unobserved; next event-driven refresh still converges.
+            }
         }
         media3 = tryConnectMedia3(packageName)
         _player.value = media3
-        publishSnapshot()
+        if (fw != null) publishSnapshot()
     }
 
     private fun detach() {

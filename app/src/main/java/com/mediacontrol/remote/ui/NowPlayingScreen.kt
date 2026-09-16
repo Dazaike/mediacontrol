@@ -2,14 +2,16 @@ package com.mediacontrol.remote.ui
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.view.ViewConfiguration
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,17 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.QueueMusic
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.Apps
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,27 +31,39 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.wear.compose.foundation.hierarchicalFocusGroup
 import androidx.wear.compose.foundation.pager.HorizontalPager
 import androidx.wear.compose.foundation.pager.rememberPagerState
+import androidx.wear.compose.foundation.requestFocusOnHierarchyActive
 import androidx.wear.compose.material3.Button
+import androidx.wear.compose.material3.ButtonGroup
+import androidx.wear.compose.material3.ButtonGroupScope
 import androidx.wear.compose.material3.FilledIconButton
 import androidx.wear.compose.material3.FilledTonalIconButton
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.IconButtonDefaults
+import androidx.wear.compose.material3.LevelIndicator
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.SwitchButton
 import androidx.wear.compose.material3.Text
-import com.mediacontrol.remote.data.ControlledSession
+import androidx.wear.compose.material3.TimeText
+import com.mediacontrol.remote.soundcore.SoundcoreMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
@@ -67,6 +71,12 @@ import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.min
 
+/**
+ * Only [NowPlayingViewModel.uiState] is collected at this level. Volume, artwork and
+ * pending-launch state are collected by the leaf composables that render them, so a
+ * bezel detent or a volume push from the phone never invalidates the pager, the
+ * backdrop or the transport row.
+ */
 @Composable
 fun NowPlayingScreen(
     vm: NowPlayingViewModel,
@@ -76,11 +86,16 @@ fun NowPlayingScreen(
     onOpenSettings: () -> Unit,
 ) {
     val uiState by vm.uiState.collectAsStateWithLifecycle()
-    val artworkBytes by vm.artworkBytes.collectAsStateWithLifecycle()
     val onToggle = remember(vm) { { vm.toggle() } }
     val onPrevious = remember(vm) { { vm.previous() } }
     val onNext = remember(vm) { { vm.next() } }
     val onSeek = remember(vm) { { pos: Long -> vm.seekTo(pos) } }
+    val onSoundcore = remember(vm) { { mode: SoundcoreMode -> vm.setSoundcoreMode(mode) } }
+    val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
+    val stepPx = remember(context) {
+        ViewConfiguration.get(context).scaledVerticalScrollFactor.takeIf { it > 0f } ?: 48f
+    }
     val pagerState = rememberPagerState(pageCount = { 2 })
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
@@ -89,83 +104,155 @@ fun NowPlayingScreen(
             modifier = Modifier.fillMaxSize(),
         ) { page ->
             Box(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .hierarchicalFocusGroup(active = page == 0)
+                    .onRotaryScrollEvent { event ->
+                        if (vm.onRotary(event.verticalScrollPixels, stepPx)) {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                        true
+                    }
+                    .requestFocusOnHierarchyActive()
+                    .focusable(),
                 contentAlignment = Alignment.Center,
             ) {
                 if (page == 0) {
                     when (val state = uiState) {
-                        NowPlayingUiState.Loading -> {
-                            Text("Loading…", style = MaterialTheme.typography.bodySmall)
-                        }
+                        is NowPlayingUiState.Ready -> ReadyContent(
+                            packageName = state.session.packageName,
+                            title = state.session.title ?: state.session.appLabel,
+                            artist = state.session.artist,
+                            isPlaying = state.session.isPlaying,
+                            positionMs = state.session.positionMs,
+                            durationMs = state.session.durationMs,
+                            vm = vm,
+                            onToggle = onToggle,
+                            onPrevious = onPrevious,
+                            onNext = onNext,
+                            onSeek = onSeek,
+                        )
 
-                        NowPlayingUiState.NoSession -> {
-                            NoSessionContent(onOpenPlayers = onOpenPlayers)
-                        }
-
-                        is NowPlayingUiState.Ready -> {
-                            ReadyContent(
-                                session = state.session,
-                                artworkBytes = artworkBytes,
-                                vm = vm,
-                                onToggle = onToggle,
-                                onPrevious = onPrevious,
-                                onNext = onNext,
-                                onSeek = onSeek,
-                            )
-                        }
+                        else -> PendingOrIdle(
+                            vm = vm,
+                            loading = state is NowPlayingUiState.Loading,
+                            onOpenPlayers = onOpenPlayers,
+                        )
                     }
                 } else {
                     MoreActionsContent(
+                        vm = vm,
                         onOpenVolume = onOpenVolume,
                         onOpenQueue = onOpenQueue,
                         onOpenPlayers = onOpenPlayers,
                         onOpenSettings = onOpenSettings,
+                        onSoundcore = onSoundcore,
                     )
                 }
             }
         }
+        // Curved clock riding the top bezel; screen-level so it survives page swipes.
+        TimeText()
+        VolumeOverlay(vm)
     }
 }
 
+/** Owns the volume collection so a bezel spin repaints only the arc. */
+@Composable
+private fun BoxScope.VolumeOverlay(vm: NowPlayingViewModel) {
+    val visible by vm.volumeVisible.collectAsStateWithLifecycle()
+    if (!visible) return
+    val volume by vm.volume.collectAsStateWithLifecycle()
+    val maxVolume by vm.maxVolume.collectAsStateWithLifecycle()
+    LevelIndicator(
+        value = { volume.toFloat() / maxVolume.coerceAtLeast(1).toFloat() },
+        modifier = Modifier.align(Alignment.CenterStart),
+    )
+}
+
+@Composable
+private fun PendingOrIdle(
+    vm: NowPlayingViewModel,
+    loading: Boolean,
+    onOpenPlayers: () -> Unit,
+) {
+    val pending by vm.pendingLaunch.collectAsStateWithLifecycle()
+    val launching = pending
+    when {
+        launching != null && !launching.failed -> Text(
+            text = "Starting ${launching.label}…",
+            style = MaterialTheme.typography.titleMedium,
+            textAlign = TextAlign.Center,
+        )
+
+        launching != null -> Text(
+            text = "Couldn't start ${launching.label}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+            textAlign = TextAlign.Center,
+        )
+
+        loading -> Text("Loading…", style = MaterialTheme.typography.bodySmall)
+
+        else -> NoSessionContent(vm = vm, onOpenPlayers = onOpenPlayers)
+    }
+}
+
+/**
+ * Takes only stable parameters — a `ByteArray` in the signature would make this and
+ * every child unconditionally non-skippable, so artwork is collected inside
+ * [AlbumBackdrop] instead.
+ */
 @Composable
 private fun ReadyContent(
-    session: ControlledSession,
-    artworkBytes: ByteArray?,
+    packageName: String,
+    title: String,
+    artist: String?,
+    isPlaying: Boolean,
+    positionMs: Long,
+    durationMs: Long,
     vm: NowPlayingViewModel,
     onToggle: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onSeek: (Long) -> Unit,
 ) {
-    var playing by remember { mutableStateOf(session.isPlaying) }
-    LaunchedEffect(session.isPlaying) { playing = session.isPlaying }
+    var playing by remember { mutableStateOf(isPlaying) }
+    LaunchedEffect(isPlaying) { playing = isPlaying }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        AlbumBackdrop(artworkBytes)
+        AlbumBackdrop(vm)
         Column(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(30.dp))
 
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 26.dp),
+                    .padding(horizontal = 34.dp, vertical = 4.dp),
             ) {
+                AppIcon(
+                    packageName = packageName,
+                    load = vm::appIcon,
+                    size = 20.dp,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = session.title ?: session.appLabel,
-                    style = MaterialTheme.typography.titleMedium,
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
                     textAlign = TextAlign.Center,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                session.artist?.let { artist ->
+                artist?.let {
                     Text(
-                        text = artist,
-                        style = MaterialTheme.typography.bodySmall,
+                        text = it,
+                        style = MaterialTheme.typography.bodyExtraSmall,
+                        modifier = Modifier.padding(top = 3.dp),
                         textAlign = TextAlign.Center,
                         maxLines = 1,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -174,53 +261,73 @@ private fun ReadyContent(
                 }
             }
 
-        TrackProgress(
-            isPlaying = playing,
-            positionMs = session.positionMs,
-            durationMs = session.durationMs,
-            onSeek = onSeek,
-        )
+            TrackProgress(
+                isPlaying = playing,
+                positionMs = positionMs,
+                durationMs = durationMs,
+                onSeek = onSeek,
+            )
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            FilledTonalIconButton(
-                onClick = onPrevious,
-                modifier = Modifier.size(IconButtonDefaults.SmallButtonSize),
+            ButtonGroup(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
             ) {
-                Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous")
+                FilledTonalIconButton(
+                    onClick = onPrevious,
+                    shapes = IconButtonDefaults.animatedShapes(),
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(TransportSideSize),
+                ) {
+                    Icon(MediaIcons.SkipPrevious, contentDescription = "Previous")
+                }
+                FilledIconButton(
+                    onClick = {
+                        playing = !playing
+                        onToggle()
+                    },
+                    shapes = IconButtonDefaults.animatedShapes(),
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        contentColor = Color.White,
+                    ),
+                    modifier = Modifier
+                        .weight(1.3f)
+                        .height(TransportPlaySize),
+                ) {
+                    Icon(
+                        if (playing) MediaIcons.Pause else MediaIcons.PlayArrow,
+                        contentDescription = if (playing) "Pause" else "Play",
+                    )
+                }
+                FilledTonalIconButton(
+                    onClick = onNext,
+                    shapes = IconButtonDefaults.animatedShapes(),
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(TransportSideSize),
+                ) {
+                    Icon(MediaIcons.SkipNext, contentDescription = "Next")
+                }
             }
-            FilledIconButton(
-                onClick = {
-                    playing = !playing
-                    onToggle()
-                },
-                modifier = Modifier.size(IconButtonDefaults.DefaultButtonSize),
-            ) {
-                Icon(
-                    if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (playing) "Pause" else "Play",
-                )
-            }
-            FilledTonalIconButton(
-                onClick = onNext,
-                modifier = Modifier.size(IconButtonDefaults.SmallButtonSize),
-            ) {
-                Icon(Icons.Filled.SkipNext, contentDescription = "Next")
-            }
-        }
 
-        StatusOrBanner(vm)
+            StatusOrBanner(vm)
 
-        Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(34.dp))
         }
     }
 }
 
 @Composable
-private fun AlbumBackdrop(artworkBytes: ByteArray?) {
+private fun AlbumBackdrop(vm: NowPlayingViewModel) {
+    val artworkBytes by vm.artworkBytes.collectAsStateWithLifecycle()
     var bitmap by remember { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(artworkBytes) {
         bitmap = withContext(Dispatchers.Default) {
@@ -259,51 +366,129 @@ private fun AlbumBackdrop(artworkBytes: ByteArray?) {
 
 @Composable
 private fun MoreActionsContent(
+    vm: NowPlayingViewModel,
     onOpenVolume: () -> Unit,
     onOpenQueue: () -> Unit,
     onOpenPlayers: () -> Unit,
     onOpenSettings: () -> Unit,
+    onSoundcore: (SoundcoreMode) -> Unit,
 ) {
+    var sending by remember { mutableStateOf<SoundcoreMode?>(null) }
+    LaunchedEffect(sending) {
+        if (sending != null) {
+            delay(6_000)
+            sending = null
+        }
+    }
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally)) {
-            FilledTonalIconButton(
-                onClick = onOpenVolume,
-                modifier = Modifier.size(IconButtonDefaults.DefaultButtonSize),
-            ) {
-                Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Volume")
+        ButtonGroup(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp),
+        ) {
+            MenuIconButton(onClick = onOpenVolume) {
+                Icon(MediaIcons.VolumeUp, contentDescription = "Volume")
             }
-            FilledTonalIconButton(
-                onClick = onOpenQueue,
-                modifier = Modifier.size(IconButtonDefaults.DefaultButtonSize),
-            ) {
-                Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = "Queue")
+            MenuIconButton(onClick = onOpenQueue) {
+                Icon(MediaIcons.QueueMusic, contentDescription = "Queue")
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally)) {
-            FilledTonalIconButton(
-                onClick = onOpenPlayers,
-                modifier = Modifier.size(IconButtonDefaults.DefaultButtonSize),
-            ) {
-                Icon(Icons.Filled.Apps, contentDescription = "Apps")
+        ButtonGroup(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp),
+        ) {
+            MenuIconButton(onClick = onOpenPlayers) {
+                Icon(MediaIcons.Apps, contentDescription = "Apps")
             }
-            FilledTonalIconButton(
-                onClick = onOpenSettings,
-                modifier = Modifier.size(IconButtonDefaults.DefaultButtonSize),
-            ) {
-                Icon(Icons.Filled.Settings, contentDescription = "Settings")
+            MenuIconButton(onClick = onOpenSettings) {
+                Icon(MediaIcons.Settings, contentDescription = "Settings")
             }
         }
+        ButtonGroup(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp),
+        ) {
+            MenuIconButton(
+                onClick = {
+                    sending = SoundcoreMode.NOISE_CANCELING
+                    onSoundcore(SoundcoreMode.NOISE_CANCELING)
+                },
+            ) {
+                Icon(MediaIcons.NoiseAware, contentDescription = "Noise Canceling")
+            }
+            MenuIconButton(
+                onClick = {
+                    sending = SoundcoreMode.TRANSPARENCY
+                    onSoundcore(SoundcoreMode.TRANSPARENCY)
+                },
+            ) {
+                Icon(MediaIcons.Hearing, contentDescription = "Transparency")
+            }
+            MenuIconButton(
+                onClick = {
+                    sending = SoundcoreMode.NORMAL
+                    onSoundcore(SoundcoreMode.NORMAL)
+                },
+            ) {
+                Icon(MediaIcons.NoiseControlOff, contentDescription = "Normal")
+            }
+        }
+        SoundcoreStatusText(vm, sending)
     }
+}
+
+/** Leaf so an earbud status push never recomposes the swipe-menu button rows. */
+@Composable
+private fun SoundcoreStatusText(vm: NowPlayingViewModel, sending: SoundcoreMode?) {
+    val status by vm.soundcore.collectAsStateWithLifecycle()
+    val failed = status.error.isNotEmpty()
+    val text = when {
+        failed -> status.error
+        sending != null && status.mode != sending -> "${sending.label} sending…"
+        status.mode != null -> "${status.mode?.label} on"
+        else -> ""
+    }
+    if (text.isEmpty()) return
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodyExtraSmall,
+        color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+        maxLines = 1,
+    )
+}
+
+/** Expressive swipe-menu button: shape morph only — width animation re-measures the row. */
+@Composable
+private fun ButtonGroupScope.MenuIconButton(
+    onClick: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    FilledTonalIconButton(
+        onClick = onClick,
+        shapes = IconButtonDefaults.animatedShapes(),
+        colors = IconButtonDefaults.filledTonalIconButtonColors(
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        ),
+        modifier = Modifier
+            .weight(1f)
+            .height(MenuButtonSize),
+        content = { content() },
+    )
 }
 
 @Composable
 private fun StatusOrBanner(vm: NowPlayingViewModel) {
     val statusLine by vm.statusLine.collectAsStateWithLifecycle()
     val banner by vm.banner.collectAsStateWithLifecycle()
+    val volumeVisible by vm.volumeVisible.collectAsStateWithLifecycle()
+    val volume by vm.volume.collectAsStateWithLifecycle()
     val currentBanner = banner
     if (currentBanner != null) {
         Text(
@@ -313,6 +498,13 @@ private fun StatusOrBanner(vm: NowPlayingViewModel) {
             maxLines = 1,
             color = MaterialTheme.colorScheme.error,
             modifier = Modifier.clickable { vm.dismissBanner() },
+        )
+    } else if (volumeVisible) {
+        Text(
+            text = "Volume $volume",
+            style = MaterialTheme.typography.bodyExtraSmall,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
         )
     } else if (statusLine.isNotEmpty()) {
         Text(
@@ -325,7 +517,6 @@ private fun StatusOrBanner(vm: NowPlayingViewModel) {
         )
     }
 }
-
 
 @Composable
 private fun TrackProgress(
@@ -351,17 +542,23 @@ private fun TrackProgress(
         val seek = committedSeek
         if (seek != null && abs(positionMs - seek) < 3_000L) committedSeek = null
     }
-    val interpolated = if (isPlaying && durationMs > 0) {
-        min(positionMs + (now - snapshotAt), durationMs)
-    } else {
-        positionMs
+    // Position state is read inside these lambdas, never during composition: the
+    // per-second tick then invalidates draw only, instead of re-laying out the screen.
+    val positionOf: () -> Long = {
+        val interpolated = if (isPlaying && durationMs > 0) {
+            min(positionMs + (now - snapshotAt), durationMs)
+        } else {
+            positionMs
+        }
+        when {
+            dragFraction != null && durationMs > 0 -> ((dragFraction ?: 0f) * durationMs).toLong()
+            committedSeek != null -> committedSeek ?: interpolated
+            else -> interpolated
+        }
     }
-    val position = when {
-        dragFraction != null && durationMs > 0 -> (dragFraction!! * durationMs).toLong()
-        committedSeek != null -> committedSeek!!
-        else -> interpolated
+    val progressFraction: () -> Float = {
+        if (durationMs > 0) positionOf().coerceIn(0L, durationMs) / durationMs.toFloat() else 0f
     }
-    val progress = if (durationMs > 0) (position.coerceIn(0L, durationMs) / durationMs.toFloat()) else 0f
     fun fractionAt(x: Float): Float =
         if (barWidthPx <= 0f) 0f else (x / barWidthPx).coerceIn(0f, 1f)
     fun seekFraction(fraction: Float) {
@@ -370,10 +567,14 @@ private fun TrackProgress(
         committedSeek = pos
         onSeek(pos)
     }
+    // Plain white on a dim white track: the bar stays legible over any artwork and
+    // never competes with the accent-coloured controls below it.
+    val trackColor = Color.White.copy(alpha = 0.26f)
+    val barColor = Color.White
     Column(
         modifier = Modifier
             .fillMaxWidth(0.58f)
-            .padding(top = 8.dp),
+            .padding(top = 0.dp, bottom = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
@@ -419,43 +620,60 @@ private fun TrackProgress(
                     .fillMaxWidth()
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(MaterialTheme.colorScheme.outlineVariant),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(progress.coerceIn(0f, 1f))
-                        .height(4.dp)
-                        .background(MaterialTheme.colorScheme.primary),
-                )
-            }
+                    .drawBehind {
+                        drawRect(trackColor)
+                        val f = progressFraction().coerceIn(0f, 1f)
+                        if (f > 0f) drawRect(barColor, size = Size(size.width * f, size.height))
+                    },
+            )
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text(formatMs(position), style = MaterialTheme.typography.bodyExtraSmall)
+            ElapsedText(positionOf)
             Text(formatMs(durationMs), style = MaterialTheme.typography.bodyExtraSmall)
         }
     }
 }
 
+/** Isolates the per-second clock read so the row around it never recomposes. */
 @Composable
-private fun NoSessionContent(onOpenPlayers: () -> Unit) {
+private fun ElapsedText(positionOf: () -> Long) {
+    Text(formatMs(positionOf()), style = MaterialTheme.typography.bodyExtraSmall)
+}
+
+@Composable
+private fun NoSessionContent(vm: NowPlayingViewModel, onOpenPlayers: () -> Unit) {
+    val autoStart by vm.autoStart.collectAsStateWithLifecycle()
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
+        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
     ) {
         Text(
             text = "Nothing playing on phone",
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleSmall,
             textAlign = TextAlign.Center,
         )
         Button(onClick = onOpenPlayers) {
             Text("Open player")
         }
+        SwitchButton(
+            checked = autoStart,
+            onCheckedChange = { vm.setAutoStart(it) },
+            modifier = Modifier.fillMaxWidth(),
+            label = {
+                Text(
+                    "Auto-start music",
+                    style = MaterialTheme.typography.bodyExtraSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+        )
     }
 }
 
@@ -463,3 +681,9 @@ private fun formatMs(ms: Long): String {
     val totalSec = (ms / 1000L).coerceAtLeast(0L)
     return "${totalSec / 60}:${(totalSec % 60).toString().padStart(2, '0')}"
 }
+
+// Slightly tighter than the Wear M3 defaults (Small 48.dp / Default 52.dp), which
+// crowd the round display once the transport row and status line share the bottom.
+private val TransportSideSize = 44.dp
+private val TransportPlaySize = 48.dp
+private val MenuButtonSize = 44.dp

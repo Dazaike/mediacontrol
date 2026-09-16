@@ -1,5 +1,7 @@
 package com.mediacontrol.remote.relay
 
+import com.mediacontrol.remote.soundcore.SoundcoreMode
+
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -49,9 +51,17 @@ class RelayProtocolTest {
     }
 
     @Test
+    fun `soundcore mode round-trips its mode`() {
+        val decoded = RelayCommand.decode(RelayCommand.Soundcore(SoundcoreMode.TRANSPARENCY).encode())
+        assertTrue(decoded is RelayCommand.Soundcore)
+        assertEquals(SoundcoreMode.TRANSPARENCY, (decoded as RelayCommand.Soundcore).mode)
+    }
+
+    @Test
     fun `malformed payload decodes to null instead of throwing`() {
         assertNull(RelayCommand.decode("not json".toByteArray()))
         assertNull(RelayCommand.decode("{}".toByteArray()))
         assertNull(RelayCommand.decode("select|".toByteArray()))
+        assertNull(RelayCommand.decode("soundcore|".toByteArray()))
     }
 }

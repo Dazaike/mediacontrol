@@ -1,5 +1,7 @@
 package com.mediacontrol.remote.relay
 
+import com.mediacontrol.remote.soundcore.SoundcoreMode
+
 /**
  * Wire contract between the watch and phone apps over the Wearable Data Layer.
  * Frozen shape: /media-state is phone→watch state (DataItem), /media-cmd is
@@ -37,6 +39,22 @@ object RelayProtocol {
     const val KEY_LIVE_PKGS = "livePkgs"
     const val KEY_LIVE_LABELS = "liveLabels"
     const val KEY_LIVE_PLAYING = "livePlaying"
+
+    // Soundcore ambient-sound mode the phone applied over RFCOMM, echoed back for UI feedback.
+    const val KEY_SOUNDCORE_MODE = "scMode"
+    const val KEY_SOUNDCORE_ERROR = "scError"
+
+    // Catalog of installed media apps on the phone, so the watch can offer apps that
+    // hold no live session yet.
+    const val PATH_MEDIA_APPS = "/media-apps"
+    const val KEY_APP_PKGS = "appPkgs"
+    const val KEY_APP_LABELS = "appLabels"
+    const val KEY_APPS_REV = "appsRev"
+
+    // Launcher icons for the catalog above, one Asset per package name, so the watch
+    // can show real app icons for packages it does not have installed itself.
+    const val PATH_APP_ICONS = "/media-app-icons"
+    const val KEY_ICONS_REV = "iconsRev"
 }
 
 /**
@@ -55,6 +73,8 @@ sealed class RelayCommand {
     object VolumeDown : RelayCommand()
     data class SetVolume(val volume: Int) : RelayCommand()
     data class SkipToQueueItem(val queueId: Long) : RelayCommand()
+    data class Soundcore(val mode: SoundcoreMode) : RelayCommand()
+    object RequestApps : RelayCommand()
 
     companion object {
         fun decode(bytes: ByteArray): RelayCommand? = try {
@@ -74,6 +94,9 @@ sealed class RelayCommand {
                 "volDown" -> VolumeDown
                 "setVol" -> arg?.toIntOrNull()?.let { SetVolume(it) }
                 "skipQueue" -> arg?.toLongOrNull()?.let { SkipToQueueItem(it) }
+                "soundcore" -> arg?.let { a -> runCatching { SoundcoreMode.valueOf(a) }.getOrNull() }
+                    ?.let { Soundcore(it) }
+                "reqApps" -> RequestApps
                 else -> null
             }
         } catch (e: Exception) {
@@ -95,6 +118,8 @@ fun RelayCommand.encode(): ByteArray {
         is RelayCommand.VolumeDown -> "volDown"
         is RelayCommand.SetVolume -> "setVol|$volume"
         is RelayCommand.SkipToQueueItem -> "skipQueue|$queueId"
+        is RelayCommand.Soundcore -> "soundcore|${mode.name}"
+        is RelayCommand.RequestApps -> "reqApps"
     }
     return text.toByteArray(Charsets.UTF_8)
 }

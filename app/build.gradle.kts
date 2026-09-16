@@ -18,7 +18,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -48,13 +49,10 @@ dependencies {
     implementation(libs.core.ktx)
     implementation(libs.activity.compose)
     implementation(platform(libs.compose.bom))
-    implementation(libs.compose.material.icons.core)
-    implementation(libs.compose.material.icons.extended)
     implementation(libs.wear.compose.material3)
     implementation(libs.wear.compose.foundation)
     implementation(libs.wear.compose.navigation)
     implementation(libs.media3.session)
-    implementation(libs.media3.ui)
     implementation(libs.wear.tiles)
     implementation(libs.protolayout)
     implementation(libs.wear.complications.datasource)
@@ -65,7 +63,6 @@ dependencies {
     implementation(libs.lifecycle.viewmodel.compose)
     implementation(libs.coroutines.android)
     implementation(libs.datastore.preferences)
-    implementation(libs.coil.compose)
     implementation(libs.guava)
     testImplementation(libs.junit)
 }

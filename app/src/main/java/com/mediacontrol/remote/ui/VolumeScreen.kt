@@ -4,9 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.VolumeDown
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -43,10 +40,10 @@ fun VolumeScreen(
             steps = (max - 1).coerceAtLeast(0),
             valueRange = 0f..max.toFloat(),
             decreaseIcon = {
-                Icon(Icons.AutoMirrored.Filled.VolumeDown, contentDescription = "Lower")
+                Icon(MediaIcons.VolumeDown, contentDescription = "Lower")
             },
             increaseIcon = {
-                Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Raise")
+                Icon(MediaIcons.VolumeUp, contentDescription = "Raise")
             },
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {

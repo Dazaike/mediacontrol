@@ -1,6 +1,10 @@
 package com.mediacontrol.remote.phone
 
 import android.app.Application
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.util.Log
 import com.google.android.gms.wearable.Asset
@@ -12,13 +16,18 @@ import com.mediacontrol.remote.data.MediaRemoteRepository
 import com.mediacontrol.remote.data.RepoHost
 import com.mediacontrol.remote.relay.RelayCommand
 import com.mediacontrol.remote.relay.RelayProtocol
+import com.mediacontrol.remote.soundcore.SoundcoreStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import java.io.ByteArrayOutputStream
 
 private const val TAG = "PhoneCompanion"
+
+/** Launcher icons are rendered at this size before crossing to the watch. */
+private const val ICON_PX = 64
 
 /**
  * Headless relay: discovers/ranks/controls the phone's own local media sessions (via
@@ -34,11 +43,15 @@ class PhoneApp : Application(), RepoHost {
     @Volatile private var lastPushKey: String? = null
     private var lastArtBytes: ByteArray? = null
     private var lastArtAsset: Asset? = null
+    val soundcore: SoundcoreController by lazy { SoundcoreController(this, btMonitor) }
+    @Volatile private var soundcoreStatus = SoundcoreStatus(null, "")
+    @Volatile private var lastAppsKey: String? = null
 
     override fun onCreate() {
         super.onCreate()
         Log.i(TAG, "PhoneApp created, refreshing sessions")
         repo.refreshSessions()
+        pushAppCatalog()
         btMonitor.start()
         scope.launch {
             repo.activeSession.collect { session ->
@@ -58,21 +71,18 @@ class PhoneApp : Application(), RepoHost {
         Log.i(TAG, "handleCommand: $cmd")
         scope.launch {
             when (cmd) {
-                is RelayCommand.Play -> repo.play()
+                is RelayCommand.Play ->
+                    if (repo.activeSession.value == null) repo.resumeLast() else repo.play()
                 is RelayCommand.Pause -> repo.pause()
-                is RelayCommand.Toggle -> repo.togglePlayPause()
+                is RelayCommand.Toggle ->
+                    if (repo.activeSession.value == null) repo.resumeLast() else repo.togglePlayPause()
                 is RelayCommand.Next -> repo.next()
                 is RelayCommand.Previous -> repo.previous()
                 is RelayCommand.Seek -> repo.seekTo(cmd.posMs)
                 is RelayCommand.Select -> {
-                    try {
-                        packageManager.getLaunchIntentForPackage(cmd.pkg)?.let {
-                            startActivity(it.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to launch package ${cmd.pkg}: ${e.message}")
-                    }
-                    repo.select(cmd.pkg)
+                    val started = repo.playPackage(cmd.pkg)
+                    Log.i(TAG, "playPackage ${cmd.pkg} started=$started")
+                    pushState(repo.activeSession.value)
                 }
                 is RelayCommand.VolumeUp -> {
                     try {
@@ -102,8 +112,94 @@ class PhoneApp : Application(), RepoHost {
                 is RelayCommand.SkipToQueueItem -> {
                     repo.skipToQueueItem(cmd.queueId)
                 }
+                is RelayCommand.Soundcore -> {
+                    soundcoreStatus = soundcore.apply(cmd.mode)
+                    Log.i(TAG, "soundcore ${cmd.mode} -> mode=${soundcoreStatus.mode} err=${soundcoreStatus.error}")
+                    pushState(repo.activeSession.value)
+                }
+                is RelayCommand.RequestApps -> {
+                    // Explicit refresh must republish even when the set is unchanged.
+                    lastAppsKey = null
+                    pushAppCatalog()
+                }
             }
         }
+    }
+
+    /**
+     * Publishes every installed media-capable app so the watch can offer players that
+     * hold no live session yet; [RelayProtocol.PATH_MEDIA_STATE] only ever carries
+     * packages that are currently playing.
+     */
+    @Suppress("DEPRECATION")
+    private fun pushAppCatalog() {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val pm = packageManager
+                val pkgs = LinkedHashSet<String>()
+                for (action in listOf(
+                    "androidx.media3.session.MediaSessionService",
+                    "android.media.browse.MediaBrowserService",
+                )) {
+                    pm.queryIntentServices(Intent(action), 0).forEach { pkgs += it.serviceInfo.packageName }
+                }
+                pm.queryIntentActivities(
+                    Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_MUSIC), 0,
+                ).forEach { pkgs += it.activityInfo.packageName }
+
+                val apps = pkgs
+                    .filter { it != packageName && pm.getLaunchIntentForPackage(it) != null }
+                    .map { it to appLabel(pm, it) }
+                    .sortedBy { it.second.lowercase() }
+                    .take(100)
+                val key = apps.joinToString("|") { it.first }
+                if (key == lastAppsKey) return@launch
+                lastAppsKey = key
+
+                val request = PutDataMapRequest.create(RelayProtocol.PATH_MEDIA_APPS).apply {
+                    dataMap.putStringArrayList(RelayProtocol.KEY_APP_PKGS, ArrayList(apps.map { it.first }))
+                    dataMap.putStringArrayList(RelayProtocol.KEY_APP_LABELS, ArrayList(apps.map { it.second }))
+                    dataMap.putLong(RelayProtocol.KEY_APPS_REV, System.currentTimeMillis())
+                }.asPutDataRequest().setUrgent()
+                Wearable.getDataClient(this@PhoneApp).putDataItem(request).await()
+                Log.i(TAG, "pushed ${apps.size} media apps")
+
+                val iconRequest = PutDataMapRequest.create(RelayProtocol.PATH_APP_ICONS).apply {
+                    for ((pkg, _) in apps) {
+                        iconBytes(pm, pkg)?.let { dataMap.putAsset(pkg, Asset.createFromBytes(it)) }
+                    }
+                    dataMap.putLong(RelayProtocol.KEY_ICONS_REV, System.currentTimeMillis())
+                }.asPutDataRequest().setUrgent()
+                Wearable.getDataClient(this@PhoneApp).putDataItem(iconRequest).await()
+                Log.i(TAG, "pushed app icons")
+            } catch (e: Exception) {
+                Log.e(TAG, "pushAppCatalog error: ${e.message}")
+            }
+        }
+    }
+
+    private fun appLabel(pm: PackageManager, pkg: String): String = try {
+        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+    } catch (e: Exception) {
+        pkg
+    }
+
+    /**
+     * Launcher icon as a small PNG. Assets are transferred out of band, so they do not
+     * count against the 100 KB DataItem limit — but they are still per-app payloads,
+     * hence 64px.
+     */
+    private fun iconBytes(pm: PackageManager, pkg: String): ByteArray? = try {
+        val drawable = pm.getApplicationIcon(pkg)
+        val bitmap = Bitmap.createBitmap(ICON_PX, ICON_PX, Bitmap.Config.ARGB_8888)
+        drawable.setBounds(0, 0, ICON_PX, ICON_PX)
+        drawable.draw(Canvas(bitmap))
+        ByteArrayOutputStream().use { out ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            out.toByteArray()
+        }
+    } catch (e: Exception) {
+        null
     }
 
     fun pushState(session: ControlledSession?) {
@@ -134,7 +230,9 @@ class PhoneApp : Application(), RepoHost {
                     append(qTitle).append('|').append(queueIds.contentHashCode()).append('|')
                     append(livePkgs).append('|')
                     append(btState.deviceName).append('|').append(btState.connected).append('|')
-                    append(artBytes?.size ?: 0)
+                    append(artBytes?.size ?: 0).append('|')
+                    append(soundcoreStatus.mode?.name ?: "").append('|')
+                    append(soundcoreStatus.error)
                 }
                 if (key == lastPushKey) return@launch
                 lastPushKey = key
@@ -158,6 +256,8 @@ class PhoneApp : Application(), RepoHost {
                     dataMap.putStringArrayList(RelayProtocol.KEY_LIVE_PKGS, livePkgs)
                     dataMap.putStringArrayList(RelayProtocol.KEY_LIVE_LABELS, liveLabels)
                     dataMap.putIntegerArrayList(RelayProtocol.KEY_LIVE_PLAYING, livePlaying)
+                    dataMap.putString(RelayProtocol.KEY_SOUNDCORE_MODE, soundcoreStatus.mode?.name ?: "")
+                    dataMap.putString(RelayProtocol.KEY_SOUNDCORE_ERROR, soundcoreStatus.error)
                     artAssetFor(artBytes)?.let { asset ->
                         dataMap.putAsset(RelayProtocol.KEY_ART_ASSET, asset)
                     }

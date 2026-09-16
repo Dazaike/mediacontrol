@@ -19,26 +19,47 @@ import kotlinx.coroutines.launch
 
 /** User-selectable accent used for every primary control across the watch app. */
 enum class AccentColor(val label: String, val primary: Color, val secondary: Color) {
-    BLUE(label = "Blue", primary = Color(0xFF3872E0), secondary = Color(0xFF85B1FF)),
-    PURPLE(label = "Purple", primary = Color(0xFF7C4DFF), secondary = Color(0xFFB39DFF)),
-    EMERALD(label = "Emerald", primary = Color(0xFF1FA97C), secondary = Color(0xFF6FE0B7)),
-    AMBER(label = "Amber", primary = Color(0xFFC77E00), secondary = Color(0xFFFFC966)),
-    CORAL(label = "Coral", primary = Color(0xFFE2543A), secondary = Color(0xFFFF9C86)),
-    MONOCHROME(label = "Monochrome", primary = Color(0xFF6B6B6B), secondary = Color(0xFFC7C7C7)),
+    BLUE(label = "Blue", primary = Color(0xFF2D7BFF), secondary = Color(0xFF7FB2FF)),
+    PURPLE(label = "Purple", primary = Color(0xFF8B5CFF), secondary = Color(0xFFC0A3FF)),
+    EMERALD(label = "Emerald", primary = Color(0xFF00C98A), secondary = Color(0xFF5FEFC0)),
+    AMBER(label = "Amber", primary = Color(0xFFFF9F0A), secondary = Color(0xFFFFD166)),
+    CORAL(label = "Coral", primary = Color(0xFFFF4D3D), secondary = Color(0xFFFF9585)),
+    MONOCHROME(label = "Monochrome", primary = Color.White, secondary = Color(0xFFD6D6D6)),
 }
 
-/** Maps this accent onto a Wear Material 3 [ColorScheme], leaving remaining tokens at defaults. */
+/**
+ * Maps this accent onto a Wear Material 3 [ColorScheme].
+ *
+ * Token wiring that matters (verified against compose-material3 1.5.0 tokens):
+ * tonal buttons and list rows fill from `surfaceContainer` and label from
+ * `onSurface`; filled buttons fill from `primary`.
+ *
+ * Buttons are deliberately dark — accent-tinted rather than grey, so the theme still
+ * reads — with pure white glyphs and labels on top. `primary` stays vivid because it
+ * also drives the volume level indicator; the play button overrides its own fill at
+ * the call site instead of dimming the token for everyone.
+ */
 fun AccentColor.toColorScheme(): ColorScheme = ColorScheme(
-    primary = primary,
-    primaryDim = lerp(primary, Color.Black, 0.22f),
-    primaryContainer = lerp(primary, Color.Black, 0.55f),
+    primary = lerp(primary, Color.White, 0.10f),
+    primaryDim = primary,
+    primaryContainer = lerp(primary, Color.Black, 0.70f),
     onPrimary = Color.White,
     onPrimaryContainer = Color.White,
     secondary = secondary,
-    secondaryDim = lerp(secondary, Color.Black, 0.22f),
-    secondaryContainer = lerp(secondary, Color.Black, 0.55f),
-    onSecondary = Color.Black,
+    secondaryDim = secondary,
+    secondaryContainer = lerp(secondary, Color.Black, 0.70f),
+    onSecondary = Color.White,
     onSecondaryContainer = Color.White,
+    tertiary = secondary,
+    tertiaryDim = secondary,
+    tertiaryContainer = lerp(secondary, Color.Black, 0.70f),
+    onTertiary = Color.White,
+    onTertiaryContainer = Color.White,
+    surfaceContainerLow = lerp(primary, Color.Black, 0.86f),
+    surfaceContainer = lerp(primary, Color.Black, 0.78f),
+    surfaceContainerHigh = lerp(primary, Color.Black, 0.68f),
+    onSurface = Color.White,
+    onSurfaceVariant = secondary,
 )
 
 private const val THEME_PREFS = "watch_theme_prefs"

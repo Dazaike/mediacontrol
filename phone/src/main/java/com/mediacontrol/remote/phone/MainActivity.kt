@@ -1,5 +1,8 @@
 package com.mediacontrol.remote.phone
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
@@ -8,7 +11,9 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -23,6 +28,13 @@ import kotlinx.coroutines.launch
  */
 class MainActivity : ComponentActivity() {
 
+    private var btStatusText: TextView? = null
+
+    private val btPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            btStatusText?.text = btStatusLine(granted)
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -33,6 +45,12 @@ class MainActivity : ComponentActivity() {
             setOnClickListener {
                 startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
             }
+        }
+        val btText = TextView(this).apply { text = btStatusLine(hasBtConnect()) }
+        btStatusText = btText
+        val btButton = Button(this).apply {
+            text = "Grant Bluetooth access"
+            setOnClickListener { requestBtConnect() }
         }
 
         val layout = LinearLayout(this).apply {
@@ -48,6 +66,8 @@ class MainActivity : ComponentActivity() {
             )
             addView(statusText)
             addView(enableButton)
+            addView(btText)
+            addView(btButton)
             addView(
                 TextView(this@MainActivity).apply {
                     setPadding(0, 32, 0, 0)
@@ -58,6 +78,7 @@ class MainActivity : ComponentActivity() {
             addView(nowPlayingText)
         }
         setContentView(layout)
+        if (!hasBtConnect()) requestBtConnect()
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -88,4 +109,20 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    /** Earbud control talks RFCOMM directly, which needs runtime BLUETOOTH_CONNECT on API 31+. */
+    private fun hasBtConnect(): Boolean =
+        Build.VERSION.SDK_INT < 31 ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun requestBtConnect() {
+        if (Build.VERSION.SDK_INT >= 31) {
+            btPermissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
+        }
+    }
+
+    private fun btStatusLine(granted: Boolean): String =
+        if (granted) "Bluetooth access: ON"
+        else "Bluetooth access: OFF — required for earbud controls"
 }

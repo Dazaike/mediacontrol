@@ -12,6 +12,8 @@ import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.mediacontrol.remote.data.CombinedMediaSource
+import com.mediacontrol.remote.data.AutoStartRepository
+import com.mediacontrol.remote.data.CuratedPlayersRepository
 
 object Routes {
     const val NOW_PLAYING = "nowPlaying"
@@ -19,6 +21,7 @@ object Routes {
     const val QUEUE = "queue"
     const val PLAYERS = "players"
     const val SETTINGS = "settings"
+    const val ADD_PLAYERS = "addPlayers"
 }
 
 @Composable
@@ -27,6 +30,8 @@ fun NavGraph(mediaSource: CombinedMediaSource) {
     val context = LocalContext.current
     val appContext = remember(context) { context.applicationContext }
     val themeVm: ThemeViewModel = viewModel(factory = ThemeViewModelFactory(appContext))
+    val curatedRepo = remember(appContext) { CuratedPlayersRepository(appContext) }
+    val autoStartRepo = remember(appContext) { AutoStartRepository(appContext) }
     val accent by themeVm.accent.collectAsStateWithLifecycle()
     val colorScheme = remember(accent) { accent.toColorScheme() }
     MaterialTheme(colorScheme = colorScheme, motionScheme = MotionScheme.standard()) {
@@ -36,7 +41,7 @@ fun NavGraph(mediaSource: CombinedMediaSource) {
         ) {
             composable(Routes.NOW_PLAYING) {
                 val vm: NowPlayingViewModel =
-                    viewModel(factory = NowPlayingViewModelFactory(mediaSource))
+                    viewModel(factory = NowPlayingViewModelFactory(mediaSource, autoStartRepo))
                 val onOpenPlayers = remember(navController) { { navController.navigate(Routes.PLAYERS) } }
                 val onOpenVolume = remember(navController) { { navController.navigate(Routes.VOLUME) } }
                 val onOpenQueue = remember(navController) { { navController.navigate(Routes.QUEUE) } }
@@ -58,11 +63,14 @@ fun NavGraph(mediaSource: CombinedMediaSource) {
                 QueueScreen(navController = navController, viewModel = vm)
             }
             composable(Routes.PLAYERS) {
-                val playersContext = LocalContext.current
-                val app = remember(playersContext) { playersContext.applicationContext }
                 val vm: PlayersViewModel =
-                    viewModel(factory = PlayersViewModelFactory(mediaSource, app))
+                    viewModel(factory = PlayersViewModelFactory(mediaSource, curatedRepo, appContext))
                 PlayersScreen(navController = navController, viewModel = vm)
+            }
+            composable(Routes.ADD_PLAYERS) {
+                val vm: AddPlayersViewModel =
+                    viewModel(factory = AddPlayersViewModelFactory(mediaSource, curatedRepo))
+                AddPlayersScreen(navController = navController, viewModel = vm)
             }
             composable(Routes.SETTINGS) {
                 SettingsScreen(navController = navController, viewModel = themeVm)

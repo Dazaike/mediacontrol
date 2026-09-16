@@ -47,7 +47,7 @@ class BtBannerTest {
     @Test
     fun `connected line shows device name`() {
         assertEquals(
-            "🎧 Pixel Buds / Connected",
+            "🎧 Pixel Buds",
             btStatusLine(BtAudioState(deviceName = "Pixel Buds", connected = true, profile = "A2DP")),
         )
     }
