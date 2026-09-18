@@ -1,6 +1,7 @@
 package com.mediacontrol.remote.data
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -55,5 +56,20 @@ class SessionPublishTest {
     @Test
     fun `null to session is published`() {
         assertTrue(shouldPublishSession(null, sess(), elapsedSincePublishMs = 0L))
+    }
+
+    @Test
+    fun `interpolates position while playing`() {
+        assertEquals(6_000L, interpolatePlaybackPosition(5_000L, true, 1_000L, 180_000L))
+    }
+
+    @Test
+    fun `does not interpolate while paused`() {
+        assertEquals(5_000L, interpolatePlaybackPosition(5_000L, false, 1_000L, 180_000L))
+    }
+
+    @Test
+    fun `caps interpolation at duration`() {
+        assertEquals(10_000L, interpolatePlaybackPosition(9_500L, true, 2_000L, 10_000L))
     }
 }

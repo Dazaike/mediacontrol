@@ -251,6 +251,7 @@ class PhoneApp : Application(), RepoHost {
                     append(session?.artist).append('|')
                     append(session?.isPlaying).append('|')
                     append(session?.durationMs).append('|')
+                    append(session?.positionMs).append('|')
                     append(currentVol).append('/').append(maxVol).append('|')
                     append(qTitle).append('|').append(queueIds.contentHashCode()).append('|')
                     append(livePkgs).append('|')
