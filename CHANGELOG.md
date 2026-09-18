@@ -3,6 +3,34 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v1.0.5] - 2026-09-18
+
+No commits landed between `v1.0.4` and this release; the changes below are the working
+tree released as `v1.0.5`.
+
+### Fixed
+- Watch app silently started itself in the background: `WatchRelayListenerService`
+  (an OS-spun `WearableListenerService`) unconditionally launched
+  `UmoBridgeSessionService` on every `/media-state` change, and the phone pushed state
+  unconditionally from `PhoneApp.onCreate()` regardless of whether the watch app had
+  ever been opened.
+- `UmoBridgeSessionService` never stopped itself once the phone reported no active
+  session: `applySession`'s `metaSame && playingSame` early-return short-circuited
+  before the `sess == null` stop branch could run, so a started service (and its
+  persistent notification) ran forever.
+
+### Changed
+- Watch and phone now negotiate a subscription: the watch sends
+  `RelayCommand.Subscribe`/`Unsubscribe` (new wire commands in `RelayProtocol`) from
+  `MainActivity.onCreate`/`onDestroy`, and the phone's `PhoneApp.startRelay()`/
+  `stopRelay()` gate Bluetooth monitoring and the `/media-state`/`/media-apps` push
+  collectors behind it — no more proactive relay work before the watch app has
+  launched.
+- The decision to start `UmoBridgeSessionService` moved from the per-DataItem
+  `WatchRelayListenerService` callback (which raced `PhoneRelaySource`'s async state
+  update) into a dedicated `MediaRemoteApp` collector on `mediaSource.activeSession`,
+  removing the dead `UmoBridgeSessionService.isRunning` flag it used to check.
+
 ## [v1.0.4] - 2026-09-16
 
 No commits landed between `v1.0.3` and this release; the changes below are the working

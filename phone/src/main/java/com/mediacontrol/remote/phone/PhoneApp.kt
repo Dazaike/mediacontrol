@@ -19,6 +19,7 @@ import com.mediacontrol.remote.relay.RelayProtocol
 import com.mediacontrol.remote.soundcore.SoundcoreStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -46,31 +47,52 @@ class PhoneApp : Application(), RepoHost {
     val soundcore: SoundcoreController by lazy { SoundcoreController(this, btMonitor) }
     @Volatile private var soundcoreStatus = SoundcoreStatus(null, "")
     @Volatile private var lastAppsKey: String? = null
+    @Volatile private var relayJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
         Log.i(TAG, "PhoneApp created, refreshing sessions")
         repo.refreshSessions()
+    }
+
+    /** Starts pushing local state to the watch; idempotent. Called when the watch subscribes. */
+    @Synchronized
+    fun startRelay() {
+        if (relayJob != null) return
+        Log.i(TAG, "startRelay: watch subscribed")
+        val job = Job(scope.coroutineContext[Job])
+        relayJob = job
         pushAppCatalog()
         btMonitor.start()
-        scope.launch {
+        scope.launch(job) {
             repo.activeSession.collect { session ->
                 Log.d(TAG, "activeSession pkg=${session?.packageName} playing=${session?.isPlaying}")
                 pushState(session)
             }
         }
-        scope.launch {
-            btMonitor.state.collect { btState ->
-                Log.d(TAG, "btState device=${btState.deviceName} connected=${btState.connected}")
-                pushState(repo.activeSession.value)
-            }
+        scope.launch(job) {
+            btMonitor.state.collect { pushState(repo.activeSession.value) }
         }
+    }
+
+    /** Stops pushing state to the watch. Called when the watch unsubscribes. */
+    @Synchronized
+    fun stopRelay() {
+        val job = relayJob ?: return
+        Log.i(TAG, "stopRelay: watch unsubscribed")
+        relayJob = null
+        job.cancel()
+        btMonitor.stop()
+        lastPushKey = null
+        lastAppsKey = null
     }
 
     fun handleCommand(cmd: RelayCommand) {
         Log.i(TAG, "handleCommand: $cmd")
         scope.launch {
             when (cmd) {
+                is RelayCommand.Subscribe -> startRelay()
+                is RelayCommand.Unsubscribe -> stopRelay()
                 is RelayCommand.Play ->
                     if (repo.activeSession.value == null) repo.resumeLast() else repo.play()
                 is RelayCommand.Pause -> repo.pause()

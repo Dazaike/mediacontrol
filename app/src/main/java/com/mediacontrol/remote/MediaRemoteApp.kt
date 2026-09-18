@@ -2,11 +2,14 @@ package com.mediacontrol.remote
 
 import android.app.Application
 import android.content.ComponentName
+import android.content.Intent
 import android.os.SystemClock
+import androidx.core.content.ContextCompat
 import androidx.wear.tiles.TileService
 import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester
 import com.mediacontrol.remote.data.CombinedMediaSource
 import com.mediacontrol.remote.data.PhoneRelaySource
+import com.mediacontrol.remote.data.UmoBridgeSessionService
 import com.mediacontrol.remote.tile.MediaComplicationService
 import com.mediacontrol.remote.tile.MediaTileService
 import kotlinx.coroutines.CoroutineScope
@@ -26,6 +29,21 @@ class MediaRemoteApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Starts the local MediaSession bridge whenever the phone reports a live session.
+        // Never stopped from here: UmoBridgeSessionService stops itself once the session
+        // goes null (see UmoBridgeSessionService.applySession). Calling
+        // startForegroundService on an already-running service is a harmless no-op
+        // (just re-delivers onStartCommand), so no extra "already running" guard is needed.
+        appScope.launch {
+            mediaSource.activeSession.collect { session ->
+                if (session != null) {
+                    ContextCompat.startForegroundService(
+                        this@MediaRemoteApp,
+                        Intent(this@MediaRemoteApp, UmoBridgeSessionService::class.java),
+                    )
+                }
+            }
+        }
         // Push Tile + complication refresh on session change from the phone, throttled
         // to ≥10s. Drops (not coalesces) bursts; Tile freshness interval covers stragglers.
         // Default, not Main: this is the first touch of [mediaSource], and building the

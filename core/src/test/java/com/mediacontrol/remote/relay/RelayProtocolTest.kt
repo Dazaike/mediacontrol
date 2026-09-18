@@ -19,6 +19,8 @@ class RelayProtocolTest {
             RelayCommand.Previous,
             RelayCommand.VolumeUp,
             RelayCommand.VolumeDown,
+            RelayCommand.Subscribe,
+            RelayCommand.Unsubscribe,
         ).forEach { cmd -> assertEquals(cmd, RelayCommand.decode(cmd.encode())) }
     }
 

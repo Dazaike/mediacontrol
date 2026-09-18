@@ -75,6 +75,8 @@ sealed class RelayCommand {
     data class SkipToQueueItem(val queueId: Long) : RelayCommand()
     data class Soundcore(val mode: SoundcoreMode) : RelayCommand()
     object RequestApps : RelayCommand()
+    object Subscribe : RelayCommand()
+    object Unsubscribe : RelayCommand()
 
     companion object {
         fun decode(bytes: ByteArray): RelayCommand? = try {
@@ -97,6 +99,8 @@ sealed class RelayCommand {
                 "soundcore" -> arg?.let { a -> runCatching { SoundcoreMode.valueOf(a) }.getOrNull() }
                     ?.let { Soundcore(it) }
                 "reqApps" -> RequestApps
+                "subscribe" -> Subscribe
+                "unsubscribe" -> Unsubscribe
                 else -> null
             }
         } catch (e: Exception) {
@@ -120,6 +124,8 @@ fun RelayCommand.encode(): ByteArray {
         is RelayCommand.SkipToQueueItem -> "skipQueue|$queueId"
         is RelayCommand.Soundcore -> "soundcore|${mode.name}"
         is RelayCommand.RequestApps -> "reqApps"
+        is RelayCommand.Subscribe -> "subscribe"
+        is RelayCommand.Unsubscribe -> "unsubscribe"
     }
     return text.toByteArray(Charsets.UTF_8)
 }

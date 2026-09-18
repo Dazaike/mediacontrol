@@ -68,7 +68,6 @@ class UmoBridgeSessionService : Service() {
             isActive = true
         }
         session = media
-        isRunning = true
         startForeground(NOTIF_ID, buildNotification(media, null, null))
         collectJob = scope.launch(Dispatchers.Default) {
             val src = source().mediaSource
@@ -83,7 +82,6 @@ class UmoBridgeSessionService : Service() {
 
     override fun onDestroy() {
         collectJob?.cancel()
-        isRunning = false
         lastBitmap = null
         lastArt = null
         session?.isActive = false
@@ -98,9 +96,24 @@ class UmoBridgeSessionService : Service() {
 
     private suspend fun applySession(sess: ControlledSession?, art: ByteArray?) {
         val media = session ?: return
-        val title = sess?.title ?: sess?.appLabel
-        val artist = sess?.artist
-        val playing = sess?.isPlaying
+        if (sess == null) {
+            withContext(Dispatchers.Main.immediate) {
+                media.setMetadata(MediaMetadata.Builder().build())
+                media.setPlaybackState(
+                    PlaybackState.Builder()
+                        .setActions(ACTIONS)
+                        .setState(PlaybackState.STATE_NONE, 0L, 0f)
+                        .build(),
+                )
+                stopForegroundCompat()
+            }
+            stopSelf()
+            return
+        }
+
+        val title = sess.title ?: sess.appLabel
+        val artist = sess.artist
+        val playing = sess.isPlaying
         val artSame = art === lastArt || (art != null && lastArt != null && art.contentEquals(lastArt))
         val metaSame = title == lastTitle && artist == lastArtist && artSame
         val playingSame = playing == lastPlaying
@@ -114,24 +127,13 @@ class UmoBridgeSessionService : Service() {
         lastBitmap = bitmap
 
         withContext(Dispatchers.Main.immediate) {
-            if (sess == null) {
-                media.setMetadata(MediaMetadata.Builder().build())
-                media.setPlaybackState(
-                    PlaybackState.Builder()
-                        .setActions(ACTIONS)
-                        .setState(PlaybackState.STATE_NONE, 0L, 0f)
-                        .build(),
-                )
-                startForeground(NOTIF_ID, buildNotification(media, null, bitmap))
-                return@withContext
-            }
             if (!metaSame) {
                 media.setMetadata(
                     MediaMetadata.Builder()
-                        .putString(MediaMetadata.METADATA_KEY_TITLE, sess.title ?: sess.appLabel)
-                        .putString(MediaMetadata.METADATA_KEY_ARTIST, sess.artist ?: sess.appLabel)
-                        .putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, sess.title ?: sess.appLabel)
-                        .putString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE, sess.artist)
+                        .putString(MediaMetadata.METADATA_KEY_TITLE, title)
+                        .putString(MediaMetadata.METADATA_KEY_ARTIST, artist ?: sess.appLabel)
+                        .putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, title)
+                        .putString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE, artist)
                         .putLong(MediaMetadata.METADATA_KEY_DURATION, sess.durationMs)
                         .apply {
                             if (bitmap != null) {
@@ -152,6 +154,15 @@ class UmoBridgeSessionService : Service() {
             if (!metaSame || !playingSame) {
                 startForeground(NOTIF_ID, buildNotification(media, sess, bitmap))
             }
+        }
+    }
+
+    private fun stopForegroundCompat() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
         }
     }
 
@@ -199,8 +210,6 @@ class UmoBridgeSessionService : Service() {
     }
 
     companion object {
-        @Volatile var isRunning = false
-            private set
         private const val SESSION_TAG = "umo_bridge"
         private const val CHANNEL_ID = "umo_bridge"
         private const val NOTIF_ID = 42
