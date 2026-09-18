@@ -402,9 +402,19 @@ class MediaRemoteRepository(private val appContext: Context) {
     private fun emitPlaying(playing: Boolean) {
         val current = _activeSession.value ?: return
         if (current.isPlaying == playing) return
-        val next = current.copy(isPlaying = playing)
+        val now = SystemClock.elapsedRealtime()
+        val elapsed = if (lastPublishAt == 0L) 0L else now - lastPublishAt
+        val next = current.copy(
+            isPlaying = playing,
+            positionMs = interpolatePlaybackPosition(
+                current.positionMs,
+                current.isPlaying,
+                elapsed,
+                current.durationMs,
+            ),
+        )
         lastPublished = next
-        lastPublishAt = SystemClock.elapsedRealtime()
+        lastPublishAt = now
         _activeSession.value = next
     }
 
@@ -534,11 +544,9 @@ class MediaRemoteRepository(private val appContext: Context) {
                 if (gen == cachedArtGen && raw.width == cachedArtW && raw.height == cachedArtH) {
                     cachedArtBytes
                 } else {
-                    val scaled = if (raw.width > 320 || raw.height > 320) {
-                        Bitmap.createScaledBitmap(raw, 320, 320, true)
-                    } else raw
+                    val scaled = scaleArtwork(raw)
                     val stream = ByteArrayOutputStream()
-                    scaled.compress(Bitmap.CompressFormat.JPEG, 70, stream)
+                    scaled.compress(Bitmap.CompressFormat.JPEG, 80, stream)
                     val bytes = stream.toByteArray()
                     cachedArtBytes = bytes
                     cachedArtGen = gen
@@ -558,10 +566,35 @@ class MediaRemoteRepository(private val appContext: Context) {
             artist = artist,
             artworkUri = artworkUri,
             isPlaying = state?.state == PlaybackState.STATE_PLAYING,
-            positionMs = state?.position ?: 0L,
+            positionMs = state?.extrapolatedPosition() ?: 0L,
             durationMs = duration,
             volumeIgnoredHere = true,
             artworkBytes = artworkBytes,
         )
     }
+}
+
+private const val ArtworkMaxPx = 480
+
+private fun scaleArtwork(raw: Bitmap): Bitmap {
+    val maxDim = maxOf(raw.width, raw.height)
+    if (maxDim <= ArtworkMaxPx) return raw
+    val scale = ArtworkMaxPx.toFloat() / maxDim
+    return Bitmap.createScaledBitmap(
+        raw,
+        (raw.width * scale).toInt().coerceAtLeast(1),
+        (raw.height * scale).toInt().coerceAtLeast(1),
+        true,
+    )
+}
+
+private fun PlaybackState.extrapolatedPosition(): Long {
+    val base = position
+    if (state != PlaybackState.STATE_PLAYING) return base
+    val updated = lastPositionUpdateTime
+    if (updated <= 0L) return base
+    val delta = SystemClock.elapsedRealtime() - updated
+    if (delta <= 0L) return base
+    val speed = playbackSpeed.takeIf { it > 0f } ?: 1f
+    return (base + delta * speed).toLong()
 }

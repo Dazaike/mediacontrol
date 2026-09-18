@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -67,8 +68,6 @@ import androidx.wear.compose.foundation.pager.HorizontalPager
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.foundation.requestFocusOnHierarchyActive
 import androidx.wear.compose.material3.Button
-import androidx.wear.compose.material3.ButtonGroup
-import androidx.wear.compose.material3.ButtonGroupScope
 import androidx.wear.compose.material3.FilledIconButton
 import androidx.wear.compose.material3.FilledTonalIconButton
 import androidx.wear.compose.material3.HorizontalPageIndicator
@@ -80,12 +79,12 @@ import androidx.wear.compose.material3.SwitchButton
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.TimeText
 import com.mediacontrol.remote.soundcore.SoundcoreMode
+import com.mediacontrol.remote.data.interpolatePlaybackPosition
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
-import kotlin.math.min
 
 /**
  * Only [NowPlayingViewModel.uiState] is collected at this level. Volume, artwork and
@@ -387,10 +386,12 @@ private fun ReadyContent(
                 onSeek = onSeek,
             )
 
-            ButtonGroup(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 FilledTonalIconButton(
                     onClick = onPrevious,
@@ -398,9 +399,7 @@ private fun ReadyContent(
                     colors = IconButtonDefaults.filledTonalIconButtonColors(
                         contentColor = MaterialTheme.colorScheme.onSurface,
                     ),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(TransportSideSize),
+                    modifier = Modifier.size(TransportSideSize),
                 ) {
                     Icon(MediaIcons.SkipPrevious, contentDescription = "Previous")
                 }
@@ -414,9 +413,7 @@ private fun ReadyContent(
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                         contentColor = Color.White,
                     ),
-                    modifier = Modifier
-                        .weight(1.3f)
-                        .height(TransportPlaySize),
+                    modifier = Modifier.size(TransportPlaySize),
                 ) {
                     AnimatedContent(
                         targetState = playing,
@@ -438,9 +435,7 @@ private fun ReadyContent(
                     colors = IconButtonDefaults.filledTonalIconButtonColors(
                         contentColor = MaterialTheme.colorScheme.onSurface,
                     ),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(TransportSideSize),
+                    modifier = Modifier.size(TransportSideSize),
                 ) {
                     Icon(MediaIcons.SkipNext, contentDescription = "Next")
                 }
@@ -465,7 +460,7 @@ private fun AlbumBackdrop(vm: NowPlayingViewModel) {
                     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
                     var sample = 1
                     val maxDim = maxOf(bounds.outWidth, bounds.outHeight)
-                    while (maxDim / sample > 96) sample *= 2
+                    while (maxDim / sample > ArtworkMaxPx) sample *= 2
                     val opts = BitmapFactory.Options().apply {
                         inJustDecodeBounds = false
                         inSampleSize = sample
@@ -522,10 +517,12 @@ private fun MoreActionsContent(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
     ) {
-        ButtonGroup(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             MenuIconButton(onClick = onOpenVolume) {
                 Icon(MediaIcons.VolumeUp, contentDescription = "Volume")
@@ -534,10 +531,12 @@ private fun MoreActionsContent(
                 Icon(MediaIcons.QueueMusic, contentDescription = "Queue")
             }
         }
-        ButtonGroup(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             MenuIconButton(onClick = onOpenPlayers) {
                 Icon(MediaIcons.Apps, contentDescription = "Apps")
@@ -546,10 +545,12 @@ private fun MoreActionsContent(
                 Icon(MediaIcons.Settings, contentDescription = "Settings")
             }
         }
-        ButtonGroup(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             MenuIconButton(
                 onClick = {
@@ -603,7 +604,7 @@ private fun SoundcoreStatusText(vm: NowPlayingViewModel, sending: SoundcoreMode?
 
 /** Expressive swipe-menu button: shape morph only — width animation re-measures the row. */
 @Composable
-private fun ButtonGroupScope.MenuIconButton(
+private fun MenuIconButton(
     onClick: () -> Unit,
     content: @Composable () -> Unit,
 ) {
@@ -613,9 +614,7 @@ private fun ButtonGroupScope.MenuIconButton(
         colors = IconButtonDefaults.filledTonalIconButtonColors(
             contentColor = MaterialTheme.colorScheme.onSurface,
         ),
-        modifier = Modifier
-            .weight(1f)
-            .height(MenuButtonSize),
+        modifier = Modifier.size(MenuButtonSize),
         content = { content() },
     )
 }
@@ -667,12 +666,12 @@ private fun TrackProgress(
     var dragFraction by remember { mutableStateOf<Float?>(null) }
     var committedSeek by remember { mutableStateOf<Long?>(null) }
     var barWidthPx by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(isPlaying) {
-        if (isPlaying) {
-            while (true) {
-                delay(1_000)
-                now = android.os.SystemClock.elapsedRealtime()
-            }
+    LaunchedEffect(isPlaying, positionMs) {
+        now = android.os.SystemClock.elapsedRealtime()
+        if (!isPlaying) return@LaunchedEffect
+        while (true) {
+            delay(1_000)
+            now = android.os.SystemClock.elapsedRealtime()
         }
     }
     LaunchedEffect(positionMs) {
@@ -682,11 +681,12 @@ private fun TrackProgress(
     // Position state is read inside these lambdas, never during composition: the
     // per-second tick then invalidates draw only, instead of re-laying out the screen.
     val positionOf: () -> Long = {
-        val interpolated = if (isPlaying && durationMs > 0) {
-            min(positionMs + (now - snapshotAt), durationMs)
-        } else {
-            positionMs
-        }
+        val interpolated = interpolatePlaybackPosition(
+            positionMs,
+            isPlaying,
+            now - snapshotAt,
+            durationMs,
+        )
         when {
             dragFraction != null && durationMs > 0 -> ((dragFraction ?: 0f) * durationMs).toLong()
             committedSeek != null -> committedSeek ?: interpolated
@@ -828,3 +828,5 @@ private val MenuButtonSize = 44.dp
 // Enough passes to read a long title through, then the screen is allowed to go
 // quiet. A track change restarts the marquee, which is when it is actually useful.
 private const val MarqueeIterations = 3
+
+private const val ArtworkMaxPx = 480

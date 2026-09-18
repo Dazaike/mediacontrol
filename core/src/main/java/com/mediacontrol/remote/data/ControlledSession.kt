@@ -41,6 +41,18 @@ fun shouldPublishSession(
     return kotlin.math.abs(next.positionMs - expected) > positionJumpMs
 }
 
+/** Watch-side / pause-side clock: advance [positionMs] only while playing. */
+fun interpolatePlaybackPosition(
+    positionMs: Long,
+    isPlaying: Boolean,
+    elapsedMs: Long,
+    durationMs: Long,
+): Long {
+    if (!isPlaying) return positionMs
+    val next = positionMs + elapsedMs.coerceAtLeast(0L)
+    return if (durationMs > 0L) next.coerceAtMost(durationMs) else next
+}
+
 private fun ByteArray?.contentEqualsOrBothNull(other: ByteArray?): Boolean =
     this === other || (this != null && other != null && contentEquals(other)) || (this == null && other == null)
 

@@ -94,34 +94,30 @@ class PhoneRelaySource(private val appContext: Context) : DataClient.OnDataChang
     }
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
-        data class Ev(val path: String?, val removed: Boolean, val map: DataMap?)
-        val events = ArrayList<Ev>(dataEvents.count)
+        val frozen = ArrayList<DataEvent>(dataEvents.count)
         for (event in dataEvents) {
-            val removed = event.type != DataEvent.TYPE_CHANGED
-            events += Ev(
-                path = event.dataItem.uri.path,
-                removed = removed,
-                map = if (removed) null else DataMapItem.fromDataItem(event.dataItem).dataMap,
-            )
+            frozen += event.freeze()
         }
         scope.launch {
             stateMutex.withLock {
-                for (event in events) {
-                    when (event.path) {
+                for (event in frozen) {
+                    val path = event.dataItem.uri.path
+                    val removed = event.type != DataEvent.TYPE_CHANGED
+                    when (path) {
                         RelayProtocol.PATH_MEDIA_STATE -> {
-                            if (event.removed) {
+                            if (removed) {
                                 lastSession = null
                                 _relaySession.value = null
                             } else {
-                                event.map?.let { processDataMap(it) }
+                                processDataMap(DataMapItem.fromDataItem(event.dataItem).dataMap)
                             }
                         }
                         RelayProtocol.PATH_MEDIA_APPS -> {
-                            if (event.removed) _phoneApps.value = emptyList()
-                            else event.map?.let { processApps(it) }
+                            if (removed) _phoneApps.value = emptyList()
+                            else processApps(DataMapItem.fromDataItem(event.dataItem).dataMap)
                         }
                         RelayProtocol.PATH_APP_ICONS -> {
-                            if (!event.removed) event.map?.let { processIcons(it) }
+                            if (!removed) processIcons(DataMapItem.fromDataItem(event.dataItem).dataMap)
                         }
                     }
                 }

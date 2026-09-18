@@ -3,6 +3,31 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+
+## [v1.0.6] - 2026-09-18
+
+One commit landed after `v1.0.5` (`dea4c04`); the rest is the working tree released as `v1.0.6`.
+
+### Added
+- `docs/watch-performance.md`: Now Playing / DataLayer / APK hard rules so the Watch 6
+  lag list is not rediscovered over another dozen sessions.
+- README app icon (`dea4c04`).
+
+### Fixed
+- Now Playing transport and swipe-menu rows used Wear `ButtonGroup`, whose morphing
+  layout remeasured on press and ate frames on the Watch 6. Replaced with a `Row` of
+  fixed-size icon buttons (`44.dp` sides / `48.dp` play); `animatedShapes` kept,
+  `animateWidth` still out. Do not `weight` the buttons across the row.
+- `PhoneRelaySource.onDataChanged` still parsed `DataMap` on the GMS binder thread.
+  Events are frozen on the callback, then parsed on IO behind the existing mutex.
+- Pause copied the last published `positionMs` onto the DataItem, and `PhoneApp.pushState`
+  omitted position from its dedupe key, so the watch froze at the last tick until the
+  next play. Pause now interpolates; PlaybackState position is extrapolated; the push
+  key includes `positionMs`. Watch progress clock resets on play/position instead of
+  waiting a second with a stale `now`.
+- Album art was decoded at 96 px (phone already scaled to a 320 px square JPEG 70).
+  Phone now sends max-480 JPEG 80; watch decodes at 480 px RGB_565.
+
 ## [v1.0.5] - 2026-09-18
 
 No commits landed between `v1.0.4` and this release; the changes below are the working
