@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/icon.svg" width="96" height="96" alt="MediaControl app icon" />
+</p>
+
 # MediaControl
 
 A Wear OS media remote: control media playback on your phone from your watch, with

@@ -24,8 +24,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Publishes a local [MediaSession] that mirrors phone relay state so Pixel UMO
- * (`com.kingm.pixel.media.sessions`) can control the phone through this app.
+ * Publishes a local [MediaSession] that mirrors phone relay state so the Pixel
+ * "Universal Media Object" system component can control the phone through this app.
  */
 class UmoBridgeSessionService : Service() {
 
