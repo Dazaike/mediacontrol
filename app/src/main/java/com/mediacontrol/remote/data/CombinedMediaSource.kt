@@ -5,6 +5,8 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.media3.common.Player
+import com.mediacontrol.remote.lyrics.LyricsClock
+import com.mediacontrol.remote.lyrics.LyricsProvider
 import com.mediacontrol.remote.relay.RelayCommand
 import com.mediacontrol.remote.soundcore.SoundcoreMode
 import com.mediacontrol.remote.soundcore.SoundcoreStatus
@@ -67,6 +69,16 @@ class CombinedMediaSource(
     // Installed media apps on the phone, for the user-curated Players list.
     val phoneApps: StateFlow<List<PhoneAppInfo>> = relay.phoneApps
 
+    // The active player's own controls (favourite, shuffle, ...), as the phone exposes them.
+    val sessionActions: StateFlow<List<SessionAction>> = relay.sessionActions
+
+    fun runAction(id: String) = relay.sendCommand(RelayCommand.RunAction(id))
+
+    // Lyrics scraped by the phone, plus the position clock that drives line highlighting.
+    val lyricsState: StateFlow<LyricsUiState> = relay.lyricsState
+    val lyricsSyncTrackKey: StateFlow<String?> = relay.lyricsSyncTrackKey
+    val lyricsClock: LyricsClock = relay.lyricsClock
+
     @Volatile
     private var cachedLastPkg: String? = null
 
@@ -123,6 +135,10 @@ class CombinedMediaSource(
     fun setVolume(vol: Int) {
         relay.sendCommand(RelayCommand.SetVolume(vol))
     }
+
+    fun ensureLyrics(provider: LyricsProvider) = relay.ensureLyrics(provider)
+
+    fun setLyricsActive(active: Boolean) = relay.setLyricsActive(active)
 
     fun nudgeVolume(steps: Int) {
         if (steps > 0) {

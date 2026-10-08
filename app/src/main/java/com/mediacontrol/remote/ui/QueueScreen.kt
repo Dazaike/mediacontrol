@@ -85,11 +85,8 @@ fun QueueScreen(
                 FilledTonalButton(
                     onClick = { viewModel.skipTo(track.queueId) },
                     modifier = Modifier.fillMaxWidth(),
-                    colors = if (isCurrent) {
-                        ButtonDefaults.buttonColors()
-                    } else {
-                        ButtonDefaults.filledTonalButtonColors()
-                    },
+                    colors = Glass.queueColors(current = isCurrent),
+                    border = Glass.Border,
                     label = {
                         Text(
                             text = if (isCurrent) "▶ ${track.title}" else "${index + 1}. ${track.title}",

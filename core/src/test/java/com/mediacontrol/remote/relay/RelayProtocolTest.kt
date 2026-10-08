@@ -1,5 +1,7 @@
 package com.mediacontrol.remote.relay
 
+import com.mediacontrol.remote.lyrics.LyricsProvider
+import com.mediacontrol.remote.lyrics.lyricsTrackKey
 import com.mediacontrol.remote.soundcore.SoundcoreMode
 
 import org.junit.Assert.assertEquals
@@ -57,6 +59,53 @@ class RelayProtocolTest {
         val decoded = RelayCommand.decode(RelayCommand.Soundcore(SoundcoreMode.TRANSPARENCY).encode())
         assertTrue(decoded is RelayCommand.Soundcore)
         assertEquals(SoundcoreMode.TRANSPARENCY, (decoded as RelayCommand.Soundcore).mode)
+    }
+
+    @Test
+    fun `lyrics commands round-trip`() {
+        LyricsProvider.entries.forEach { p ->
+            assertEquals(RelayCommand.RequestLyrics(p), RelayCommand.decode(RelayCommand.RequestLyrics(p).encode()))
+        }
+        assertEquals(RelayCommand.LyricsActive(true), RelayCommand.decode(RelayCommand.LyricsActive(true).encode()))
+        assertEquals(RelayCommand.LyricsActive(false), RelayCommand.decode(RelayCommand.LyricsActive(false).encode()))
+    }
+
+    @Test
+    fun `run action keeps pipes in the action id and rejects an empty id`() {
+        val cmd = RelayCommand.RunAction("com.app.ACTION|TOGGLE_LIKE")
+        assertEquals(cmd, RelayCommand.decode(cmd.encode()))
+        assertNull(RelayCommand.decode("action|".toByteArray()))
+        assertNull(RelayCommand.decode("action".toByteArray()))
+    }
+
+    @Test
+    fun `malformed lyrics commands decode to null`() {
+        assertNull(RelayCommand.decode("lyrics|NOPE".toByteArray()))
+        assertNull(RelayCommand.decode("lyrics".toByteArray()))
+        assertNull(RelayCommand.decode("lyricsActive|2".toByteArray()))
+        assertNull(RelayCommand.decode("lyricsActive".toByteArray()))
+    }
+
+    @Test
+    fun `lyrics sync keeps a pipe inside the track key`() {
+        val key = lyricsTrackKey("A | B", "Artist|X", 200_500L)
+        val msg = decodeLyricsSync(encodeLyricsSync(LyricsSyncMsg(12_345L, true, 180L, 99_000L, key)))
+        assertEquals(LyricsSyncMsg(12_345L, true, 180L, 99_000L, key), msg)
+        assertEquals(false, decodeLyricsSync(encodeLyricsSync(LyricsSyncMsg(0L, false, 0L, 1L, key)))?.playing)
+    }
+
+    @Test
+    fun `malformed lyrics sync decodes to null`() {
+        assertNull(decodeLyricsSync("abc|1|0|5|key".toByteArray()))
+        assertNull(decodeLyricsSync("100|2|0|5|key".toByteArray()))
+        assertNull(decodeLyricsSync("100|1|x|5|key".toByteArray()))
+        assertNull(decodeLyricsSync("100|1|0|5".toByteArray()))
+    }
+
+    @Test
+    fun `lyrics ack round-trips its stamp`() {
+        assertEquals(RelayCommand.LyricsAck(42L), RelayCommand.decode(RelayCommand.LyricsAck(42L).encode()))
+        assertNull(RelayCommand.decode("lyricsAck|x".toByteArray()))
     }
 
     @Test

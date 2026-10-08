@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -43,6 +44,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
@@ -99,6 +101,8 @@ fun NowPlayingScreen(
     onOpenVolume: () -> Unit,
     onOpenQueue: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenLyrics: () -> Unit,
+    panelOpen: Boolean = false,
 ) {
     val haptics = LocalHapticFeedback.current
     // Every transport action ticks: on a watch the screen is often out of view, so
@@ -132,9 +136,12 @@ fun NowPlayingScreen(
     val stepPx = remember(context) {
         ViewConfiguration.get(context).scaledVerticalScrollFactor.takeIf { it > 0f } ?: 48f
     }
-    val pagerState = rememberPagerState(pageCount = { 2 })
+    // Page 0: the player's own controls (swipe right). 1: Now Playing. 2: More actions.
+    val pagerState = rememberPagerState(initialPage = 1, pageCount = { 3 })
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        // One backdrop behind every page so the glass surfaces have something to veil.
+        Backdrop()
         HorizontalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize(),
@@ -143,20 +150,28 @@ fun NowPlayingScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .hierarchicalFocusGroup(active = page == 0)
-                    .onRotaryScrollEvent { event ->
-                        if (vm.onRotary(event.verticalScrollPixels, stepPx)) {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        }
-                        true
-                    }
+                    .hierarchicalFocusGroup(active = page <= 1 && !panelOpen)
                     .then(
-                        if (page == 0) {
-                            // A plain upward swipe (no horizontal component) jumps
-                            // straight to the queue; awaitVerticalTouchSlopOrCancellation
-                            // backs off for a horizontal-dominant drag so page swipes
-                            // between Now Playing and More actions still work.
-                            Modifier.pointerInput(onOpenQueue) {
+                        // Page 0 is a scrolling list: leave the bezel to it instead of volume.
+                        if (page != 0 && !panelOpen) {
+                            Modifier.onRotaryScrollEvent { event ->
+                                if (vm.onRotary(event.verticalScrollPixels, stepPx)) {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                }
+                                true
+                            }
+                        } else {
+                            Modifier
+                        },
+                    )
+                    .then(
+                        if (page == 1) {
+                            // A plain vertical swipe (no horizontal component) jumps
+                            // straight to a screen: up opens the queue, down the lyrics.
+                            // awaitVerticalTouchSlopOrCancellation backs off for a
+                            // horizontal-dominant drag so page swipes between the player
+                            // controls, Now Playing and More actions still work.
+                            Modifier.pointerInput(onOpenQueue, onOpenLyrics) {
                                 val thresholdPx = 56.dp.toPx()
                                 var accumulated = 0f
                                 var triggered = false
@@ -167,10 +182,10 @@ fun NowPlayingScreen(
                                     },
                                     onVerticalDrag = { change, dragAmount ->
                                         accumulated += dragAmount
-                                        if (!triggered && accumulated < -thresholdPx) {
+                                        if (!triggered && abs(accumulated) > thresholdPx) {
                                             triggered = true
                                             change.consume()
-                                            onOpenQueue()
+                                            if (accumulated < 0f) onOpenQueue() else onOpenLyrics()
                                         }
                                     },
                                 )
@@ -179,12 +194,14 @@ fun NowPlayingScreen(
                             Modifier
                         }
                     )
-                    .requestFocusOnHierarchyActive()
-                    .focusable(),
+                    .then(
+                        if (page != 0 && !panelOpen) Modifier.requestFocusOnHierarchyActive().focusable() else Modifier,
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
-                if (page == 0) {
-                    NowPlayingPage(
+                when (page) {
+                    0 -> PlayerControlsPage(vm = vm)
+                    1 -> NowPlayingPage(
                         vm = vm,
                         onToggle = onToggle,
                         onPrevious = onPrevious,
@@ -192,8 +209,7 @@ fun NowPlayingScreen(
                         onSeek = onSeek,
                         onOpenPlayers = onOpenPlayers,
                     )
-                } else {
-                    MoreActionsContent(
+                    else -> MoreActionsContent(
                         vm = vm,
                         onOpenVolume = onOpenVolume,
                         onOpenQueue = onOpenQueue,
@@ -291,7 +307,7 @@ private fun PendingOrIdle(
 /**
  * Takes only stable parameters — a `ByteArray` in the signature would make this and
  * every child unconditionally non-skippable, so artwork is collected inside
- * [AlbumBackdrop] instead.
+ * [Backdrop] instead.
  */
 @Composable
 private fun ReadyContent(
@@ -311,7 +327,7 @@ private fun ReadyContent(
     LaunchedEffect(isPlaying) { playing = isPlaying }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        AlbumBackdrop(vm)
+
         Column(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -396,9 +412,8 @@ private fun ReadyContent(
                 FilledTonalIconButton(
                     onClick = onPrevious,
                     shapes = IconButtonDefaults.animatedShapes(),
-                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                        contentColor = MaterialTheme.colorScheme.onSurface,
-                    ),
+                    colors = Glass.iconButtonColors(),
+                    border = Glass.Border,
                     modifier = Modifier.size(TransportSideSize),
                 ) {
                     Icon(MediaIcons.SkipPrevious, contentDescription = "Previous")
@@ -410,9 +425,10 @@ private fun ReadyContent(
                     },
                     shapes = IconButtonDefaults.animatedShapes(),
                     colors = IconButtonDefaults.filledIconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        containerColor = Color.White.copy(alpha = 0.20f),
                         contentColor = Color.White,
                     ),
+                    border = Glass.Border,
                     modifier = Modifier.size(TransportPlaySize),
                 ) {
                     AnimatedContent(
@@ -432,9 +448,8 @@ private fun ReadyContent(
                 FilledTonalIconButton(
                     onClick = onNext,
                     shapes = IconButtonDefaults.animatedShapes(),
-                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                        contentColor = MaterialTheme.colorScheme.onSurface,
-                    ),
+                    colors = Glass.iconButtonColors(),
+                    border = Glass.Border,
                     modifier = Modifier.size(TransportSideSize),
                 ) {
                     Icon(MediaIcons.SkipNext, contentDescription = "Next")
@@ -444,54 +459,6 @@ private fun ReadyContent(
             StatusOrBanner(vm)
 
             Spacer(modifier = Modifier.height(34.dp))
-        }
-    }
-}
-
-@Composable
-private fun AlbumBackdrop(vm: NowPlayingViewModel) {
-    val artworkBytes by vm.artworkBytes.collectAsStateWithLifecycle()
-    var bitmap by remember { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(artworkBytes) {
-        bitmap = withContext(Dispatchers.Default) {
-            artworkBytes?.let { bytes ->
-                try {
-                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-                    var sample = 1
-                    val maxDim = maxOf(bounds.outWidth, bounds.outHeight)
-                    while (maxDim / sample > ArtworkMaxPx) sample *= 2
-                    val opts = BitmapFactory.Options().apply {
-                        inJustDecodeBounds = false
-                        inSampleSize = sample
-                        inPreferredConfig = Bitmap.Config.RGB_565
-                    }
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)?.asImageBitmap()
-                } catch (_: Exception) {
-                    null
-                }
-            }
-        }
-    }
-    // Crossfade rather than snap: the decode lands asynchronously, so a hard swap
-    // reads as a flash on track change.
-    Crossfade(targetState = bitmap, animationSpec = tween(500), label = "artwork") { art ->
-        if (art != null) {
-            // The dim rides along as a colour filter rather than a second full-screen
-            // Box: SrcAtop with 72% black is the same pixel result as compositing that
-            // Box on top, but it costs one full-screen fill per frame instead of two.
-            Image(
-                bitmap = art,
-                contentDescription = null,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer(),
-                contentScale = ContentScale.Crop,
-                colorFilter = ColorFilter.tint(
-                    Color.Black.copy(alpha = 0.72f),
-                    BlendMode.SrcAtop,
-                ),
-            )
         }
     }
 }
@@ -611,9 +578,8 @@ private fun MenuIconButton(
     FilledTonalIconButton(
         onClick = onClick,
         shapes = IconButtonDefaults.animatedShapes(),
-        colors = IconButtonDefaults.filledTonalIconButtonColors(
-            contentColor = MaterialTheme.colorScheme.onSurface,
-        ),
+        colors = Glass.iconButtonColors(),
+        border = Glass.Border,
         modifier = Modifier.size(MenuButtonSize),
         content = { content() },
     )

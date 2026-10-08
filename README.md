@@ -28,14 +28,16 @@ live queue, volume, and Bluetooth-audio status synced over the Wearable Data Lay
 ## Building
 
 ```sh
-./gradlew :app:assembleDebug :phone:assembleDebug :core:assembleDebug test
+./gradlew :app:assembleRelease :phone:assembleRelease :core:assembleDebug test
 ```
 
-Install on a paired Wear OS watch + phone over `adb`:
+Install on a paired Wear OS watch + phone over `adb` (v1.0.7). Use the release builds on
+the watch: debug builds run uncompiled and lag badly there.
 
 ```sh
-adb -s <phone-serial> install -r phone/build/outputs/apk/debug/phone-debug.apk
-adb -s <watch-serial> install -r app/build/outputs/apk/debug/app-debug.apk
+adb -s <phone-serial> install -r phone/build/outputs/apk/release/phone-release.apk
+adb -s <watch-serial> install -r app/build/outputs/apk/release/app-release.apk
+adb -s <watch-serial> shell cmd package compile -m speed -f com.mediacontrol.remote
 ```
 
 ## Architecture notes
@@ -44,3 +46,16 @@ adb -s <watch-serial> install -r app/build/outputs/apk/debug/app-debug.apk
   (`DataClient`/`MessageClient`); see `core`'s relay protocol for the wire format.
 - The watch never reads or shows media playing locally on the watch itself — all
   playback state is relayed from the phone.
+- Lyrics: the phone (the only module with `INTERNET`) scrapes LRC.red, BetterLyrics,
+  LyricsPlus, LRCLIB, KuGou or Genius, converts the result to one model
+  (`core/.../lyrics`), and ships it to the watch as a gzip Asset on `/lyrics`. While the
+  watch's Lyrics page is open the phone sends its live playback position on
+  `/lyrics-sync` about every 1.5 s. The provider is chosen under Settings → Lyrics
+  source (or by tapping the Lyrics page); `Auto` prefers word-synced, then line-synced,
+  then Genius plain text, while an explicit provider never falls back.
+- Player controls: the phone mirrors the active session's `PlaybackState` custom actions
+  (favourite, shuffle, ...) and their icons on `/media-actions`; the watch lists them on
+  the page left of Now Playing (swipe right) and sends `action|<id>` back to fire them.
+- Stay open (Settings): registers the watch activity for ambient mode so the player stays
+  up, dimmed, after the wrist drops; once the screen has been off longer than the chosen
+  time the task moves back. Off by default, in which case no ambient support is registered.

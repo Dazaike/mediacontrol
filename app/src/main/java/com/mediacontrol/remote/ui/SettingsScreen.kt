@@ -13,16 +13,26 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.wear.compose.foundation.lazy.items
+import androidx.wear.compose.material3.Button
+import com.mediacontrol.remote.lyrics.LyricsProvider
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.RadioButton
+import androidx.compose.ui.text.style.TextAlign
+import androidx.wear.compose.material3.MaterialTheme
+import com.mediacontrol.remote.data.STAY_OPEN_CHOICES
+import com.mediacontrol.remote.data.stayOpenLabel
 import androidx.wear.compose.material3.Text
 
 @Composable
 fun SettingsScreen(
     navController: NavHostController,
     viewModel: ThemeViewModel,
+    lyricsViewModel: LyricsViewModel,
+    stayOpenViewModel: StayOpenViewModel,
 ) {
     val accent by viewModel.accent.collectAsStateWithLifecycle()
+    val lyricsProvider by lyricsViewModel.provider.collectAsStateWithLifecycle()
+    val stayMinutes by stayOpenViewModel.minutes.collectAsStateWithLifecycle()
     SecondaryScaffold(navController = navController) {
         item {
             ListHeader {
@@ -43,6 +53,37 @@ fun SettingsScreen(
                     )
                 },
                 label = { Text(option.label) },
+            )
+        }
+        item {
+            Button(
+                onClick = { navController.navigate(Routes.LYRICS_SOURCE) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = Glass.buttonColors(),
+                border = Glass.Border,
+                label = { Text("Lyrics source") },
+                secondaryLabel = { Text((lyricsProvider ?: LyricsProvider.AUTO).label) },
+            )
+        }
+        item {
+            ListHeader {
+                Text("Stay open")
+            }
+        }
+        item {
+            Text(
+                text = "Keep the player up after the screen turns off",
+                style = MaterialTheme.typography.bodyExtraSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
+        items(STAY_OPEN_CHOICES) { minutes ->
+            RadioButton(
+                selected = minutes == stayMinutes,
+                onSelect = { stayOpenViewModel.setMinutes(minutes) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(stayOpenLabel(minutes)) },
             )
         }
     }

@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.mediacontrol.remote.data.AutoStartRepository
 import com.mediacontrol.remote.data.CombinedMediaSource
+import com.mediacontrol.remote.data.SessionAction
 import com.mediacontrol.remote.data.ControlledSession
 import com.mediacontrol.remote.data.PendingLaunch
 import com.mediacontrol.remote.data.btStatusLine
@@ -51,6 +52,10 @@ class NowPlayingViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NowPlayingUiState.Loading)
 
     val artworkBytes: StateFlow<ByteArray?> = mediaSource.artworkBytes
+
+    val sessionActions: StateFlow<List<SessionAction>> = mediaSource.sessionActions
+
+    fun runAction(id: String) = mediaSource.runAction(id)
 
     val pendingLaunch: StateFlow<PendingLaunch?> = mediaSource.pendingLaunch
 

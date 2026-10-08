@@ -42,7 +42,8 @@ fun PlayersScreen(
                     navController.popBackStack(Routes.NOW_PLAYING, false)
                 },
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.filledTonalButtonColors(),
+                colors = Glass.buttonColors(),
+                border = Glass.Border,
                 icon = { AppIcon(packageName = entry.packageName, load = viewModel::icon) },
                 label = { Text(if (entry.isPlaying) "▶ ${entry.label}" else entry.label) },
             )
@@ -51,7 +52,8 @@ fun PlayersScreen(
             FilledTonalButton(
                 onClick = { navController.navigate(Routes.ADD_PLAYERS) },
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.filledTonalButtonColors(),
+                colors = Glass.buttonColors(),
+                border = Glass.Border,
                 label = { Text("Add apps") },
             )
         }

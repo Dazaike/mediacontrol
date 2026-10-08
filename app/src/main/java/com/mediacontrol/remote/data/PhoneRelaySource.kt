@@ -12,6 +12,15 @@ import com.google.android.gms.wearable.DataItemBuffer
 import com.google.android.gms.wearable.DataMap
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.Wearable
+import com.google.android.gms.wearable.MessageClient
+import com.google.android.gms.wearable.MessageEvent
+import com.mediacontrol.remote.lyrics.LyricsClock
+import com.mediacontrol.remote.lyrics.LyricsCodec
+import com.mediacontrol.remote.lyrics.LyricsProvider
+import com.mediacontrol.remote.lyrics.lyricsTrackKey
+import com.mediacontrol.remote.relay.decodeLyricsSync
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import com.mediacontrol.remote.relay.RelayCommand
 import com.mediacontrol.remote.relay.RelayProtocol
 import com.mediacontrol.remote.relay.encode
@@ -29,6 +38,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import java.util.concurrent.ConcurrentHashMap
 
+private const val LYRICS_TIMEOUT_MS = 45_000L
+private const val MAX_BEACON_LATENCY_MS = 3_000L
 private const val TAG = "PhoneRelaySource"
 
 /** An installed media app on the phone, offered on the watch's Add-players screen. */
@@ -38,7 +49,8 @@ data class PhoneAppInfo(val packageName: String, val label: String)
  * Watch-side half of the phone companion: receives `/media-state` DataItem updates
  * (session, volume, and queue) and sends `/media-cmd` messages to the phone.
  */
-class PhoneRelaySource(private val appContext: Context) : DataClient.OnDataChangedListener {
+class PhoneRelaySource(private val appContext: Context) :
+    DataClient.OnDataChangedListener, MessageClient.OnMessageReceivedListener {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val stateMutex = Mutex()
@@ -68,6 +80,21 @@ class PhoneRelaySource(private val appContext: Context) : DataClient.OnDataChang
     val soundcore: StateFlow<SoundcoreStatus> = _soundcore.asStateFlow()
     private val _phoneApps = MutableStateFlow<List<PhoneAppInfo>>(emptyList())
     val phoneApps: StateFlow<List<PhoneAppInfo>> = _phoneApps.asStateFlow()
+
+    private val _sessionActions = MutableStateFlow<List<SessionAction>>(emptyList())
+    /** The active player's own controls (favourite, shuffle, ...) mirrored from the phone. */
+    val sessionActions: StateFlow<List<SessionAction>> = _sessionActions.asStateFlow()
+
+    private val _lyricsState = MutableStateFlow<LyricsUiState>(LyricsUiState.Idle)
+    val lyricsState: StateFlow<LyricsUiState> = _lyricsState.asStateFlow()
+    /** Position beacon from the phone; anchored on receipt. See [LyricsClock]. */
+    val lyricsClock = LyricsClock()
+    private val _lyricsSyncTrackKey = MutableStateFlow<String?>(null)
+    /** Track key the latest beacon belongs to, so a stale clock is not applied to a new track. */
+    val lyricsSyncTrackKey: StateFlow<String?> = _lyricsSyncTrackKey.asStateFlow()
+    @Volatile private var requestedLyricsKey: String? = null
+    @Volatile private var requestedLyricsProvider: LyricsProvider? = null
+    private var lyricsWatchdog: Job? = null
     private var lastSession: ControlledSession? = null
     private var lastSessionAt = 0L
     @Volatile private var iconAssets: Map<String, Asset> = emptyMap()
@@ -86,9 +113,15 @@ class PhoneRelaySource(private val appContext: Context) : DataClient.OnDataChang
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to register DataClient listener: ${e.message}")
                 }
+                try {
+                    Wearable.getMessageClient(appContext).addListener(this@PhoneRelaySource)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to register MessageClient listener: ${e.message}")
+                }
                 prefetch(RelayProtocol.PATH_MEDIA_STATE) { processDataMap(it) }
                 prefetch(RelayProtocol.PATH_MEDIA_APPS) { processApps(it) }
                 prefetch(RelayProtocol.PATH_APP_ICONS) { processIcons(it) }
+                prefetch(RelayProtocol.PATH_MEDIA_ACTIONS) { map -> scope.launch { processActions(map) } }
             }
         }
     }
@@ -119,10 +152,109 @@ class PhoneRelaySource(private val appContext: Context) : DataClient.OnDataChang
                         RelayProtocol.PATH_APP_ICONS -> {
                             if (!removed) processIcons(DataMapItem.fromDataItem(event.dataItem).dataMap)
                         }
+                        RelayProtocol.PATH_MEDIA_ACTIONS -> {
+                            if (removed) _sessionActions.value = emptyList()
+                            else processActions(DataMapItem.fromDataItem(event.dataItem).dataMap)
+                        }
+                        RelayProtocol.PATH_LYRICS -> {
+                            if (!removed) processLyrics(DataMapItem.fromDataItem(event.dataItem).dataMap)
+                        }
                     }
                 }
             }
         }
+    }
+
+    override fun onMessageReceived(event: MessageEvent) {
+        if (event.path != RelayProtocol.PATH_LYRICS_SYNC) return
+        val msg = decodeLyricsSync(event.data) ?: return
+        // Beacons spend some time in flight; the phone measures it from our acks and tells us.
+        val lead = if (msg.playing) msg.latencyMs.coerceIn(0L, MAX_BEACON_LATENCY_MS) else 0L
+        lyricsClock.anchor(msg.posMs + lead, msg.playing, SystemClock.elapsedRealtime())
+        sendCommand(RelayCommand.LyricsAck(msg.stamp))
+        if (_lyricsSyncTrackKey.value != msg.trackKey) _lyricsSyncTrackKey.value = msg.trackKey
+    }
+
+    /** Asks the phone for lyrics of the current track; the answer arrives via [lyricsState]. */
+    fun requestLyrics(provider: LyricsProvider) {
+        val s = _relaySession.value
+        val key = lyricsTrackKey(s?.title, s?.artist, s?.durationMs ?: 0L)
+        lyricsWatchdog?.cancel()
+        if (s == null || s.title.isNullOrBlank()) {
+            requestedLyricsKey = null
+            _lyricsState.value = LyricsUiState.None(key)
+            return
+        }
+        requestedLyricsKey = key
+        requestedLyricsProvider = provider
+        _lyricsState.value = LyricsUiState.Loading(key)
+        // The phone answers every request; this only covers a disconnected phone.
+        lyricsWatchdog = scope.launch {
+            delay(LYRICS_TIMEOUT_MS)
+            if (requestedLyricsKey == key && _lyricsState.value is LyricsUiState.Loading) {
+                _lyricsState.value = LyricsUiState.None(key)
+            }
+        }
+        sendCommand(RelayCommand.RequestLyrics(provider))
+    }
+
+    /**
+     * Tells the phone whether a lyrics screen is live. Going inactive makes the phone drop any
+     * unfinished fetch, so a pending request is forgotten here too; reopening asks again.
+     */
+    fun setLyricsActive(active: Boolean) {
+        if (!active && _lyricsState.value is LyricsUiState.Loading) {
+            lyricsWatchdog?.cancel()
+            requestedLyricsKey = null
+            _lyricsState.value = LyricsUiState.Idle
+        }
+        sendCommand(RelayCommand.LyricsActive(active))
+    }
+
+    /** Requests lyrics unless this exact track+provider is already loaded or in flight. */
+    fun ensureLyrics(provider: LyricsProvider) {
+        val s = _relaySession.value
+        val key = lyricsTrackKey(s?.title, s?.artist, s?.durationMs ?: 0L)
+        val state = _lyricsState.value
+        val covered = requestedLyricsKey == key && requestedLyricsProvider == provider &&
+            (state is LyricsUiState.Ready || state is LyricsUiState.Loading)
+        if (!covered) requestLyrics(provider)
+    }
+
+    private suspend fun processActions(map: DataMap) {
+        val ids = map.getStringArrayList(RelayProtocol.KEY_ACT_IDS) ?: return
+        val labels = map.getStringArrayList(RelayProtocol.KEY_ACT_LABELS) ?: return
+        if (ids.size != labels.size) return
+        val next = ids.indices.map { i ->
+            val icon = map.getAsset(RelayProtocol.KEY_ACT_ICON_PREFIX + i)?.let { asset ->
+                try {
+                    Wearable.getDataClient(appContext).getFdForAsset(asset).await().inputStream.use { it.readBytes() }
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            SessionAction(ids[i], labels[i], icon)
+        }
+        if (next != _sessionActions.value) _sessionActions.value = next
+    }
+
+    private suspend fun processLyrics(map: DataMap) {
+        val key = map.getString(RelayProtocol.KEY_LYRICS_TRACK) ?: return
+        val requested = map.getString(RelayProtocol.KEY_LYRICS_REQUESTED) ?: return
+        if (key != requestedLyricsKey || requested != requestedLyricsProvider?.name) {
+            Log.d(TAG, "ignoring stale lyrics '$key' via $requested")
+            return
+        }
+        val asset = map.getAsset(RelayProtocol.KEY_LYRICS_PAYLOAD)
+        val lyrics = if (asset == null) null else try {
+            val fd = Wearable.getDataClient(appContext).getFdForAsset(asset).await()
+            LyricsCodec.decode(fd.inputStream.use { it.readBytes() })
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load lyrics asset: ${e.message}")
+            null
+        }
+        lyricsWatchdog?.cancel()
+        _lyricsState.value = if (lyrics == null) LyricsUiState.None(key) else LyricsUiState.Ready(key, lyrics)
     }
 
     private suspend fun prefetch(path: String, handle: (DataMap) -> Unit) {
@@ -148,6 +280,7 @@ class PhoneRelaySource(private val appContext: Context) : DataClient.OnDataChang
     private fun processIcons(map: DataMap) {
         val assets = HashMap<String, Asset>()
         for (key in map.keySet()) {
+            if (key == RelayProtocol.KEY_ICONS_REV) continue
             map.getAsset(key)?.let { assets[key] = it }
         }
         if (assets.isEmpty()) return

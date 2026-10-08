@@ -12,8 +12,8 @@ android {
         applicationId = "com.mediacontrol.remote"
         minSdk = 30
         targetSdk = 34
-        versionCode = 7
-        versionName = "1.0.6"
+        versionCode = 8
+        versionName = "1.0.7"
     }
 
     buildTypes {
@@ -45,6 +45,7 @@ kotlin {
 dependencies {
     implementation(project(":core"))
     implementation(libs.play.services.wearable)
+    implementation(libs.androidx.wear)
     implementation(libs.coroutines.play.services)
     implementation(libs.core.ktx)
     implementation(libs.activity.compose)

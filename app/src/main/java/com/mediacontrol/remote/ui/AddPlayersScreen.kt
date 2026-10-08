@@ -92,7 +92,8 @@ fun AddPlayersScreen(
                 FilledTonalButton(
                     onClick = { viewModel.refresh() },
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.filledTonalButtonColors(),
+                    colors = Glass.buttonColors(),
+                    border = Glass.Border,
                     label = { Text("Refresh") },
                 )
             }

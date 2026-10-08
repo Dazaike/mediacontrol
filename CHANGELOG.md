@@ -3,6 +3,50 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v1.0.7] - 2026-10-08
+
+No commits landed after `v1.0.6`; the changes below are the working tree released as
+`v1.0.7`. Phone and watch must both be updated: the lyrics and player-control messages
+changed the relay protocol.
+
+### Added
+- Lyrics (swipe down on Now Playing). The phone, the only module with `INTERNET`, fetches
+  from LRC.red, BetterLyrics, LyricsPlus, LRCLIB, KuGou or Genius and ships one compact
+  model to the watch as a gzip Asset on `/lyrics`. `Auto` prefers word-synced, then
+  line-synced, then Genius plain text; an explicit provider never falls back. The source
+  is chosen in Settings → Lyrics source or by tapping the lyrics.
+- Word-by-word highlighting: each word fades in over ~220 ms starting ~80 ms before it
+  begins. Long lines wrap onto up to three lines and shrink (to 70%) to fit.
+- Live playback position for lyrics on `/lyrics-sync` every ~1.5 s while the lyrics are
+  open, with delivery-latency compensation: the watch acks each beacon and the phone
+  feeds half the measured round trip back into the next one.
+- Player controls (swipe right of Now Playing): the phone mirrors the active session's
+  `PlaybackState` custom actions (favourite, shuffle, …) with their icons on
+  `/media-actions`; tapping one fires it in the player (`action|<id>`).
+- Frosted-glass look: translucent veils with a hairline edge on buttons, over a softened,
+  dimmed album-art backdrop shared by Now Playing, the queue, lyrics and secondary
+  screens. The queue rows are more strongly tinted; the lyrics backdrop is dimmed to 90%.
+- Settings → Stay open (Off / 2 / 5 / 10 / 30 min): registers the watch activity for
+  ambient mode so the player stays up, dimmed, after the wrist drops; once the screen has
+  been off longer than the chosen time the task moves back. Off by default, in which case
+  no ambient support is registered.
+- Unit tests for the lyrics parsers, codec, timing and provider selection, and for the
+  new relay commands.
+
+### Changed
+- Now Playing is a three-page pager (player controls, Now Playing, More actions). Swiping
+  up opens the queue and swiping down opens the lyrics as vertical panels (the navigation
+  host only offers horizontal transitions); a swipe right from the left edge closes them.
+- Install the release build on the watch (R8 + ahead-of-time compile); see README.
+- Lyrics do nothing unless the lyrics screen is open, the app is on screen and the watch is
+  not ambient: no fetches, beacons or frame loop otherwise, and the phone cancels an
+  unfinished fetch when the screen closes. Changing the source in Settings only saves it.
+
+### Fixed
+- Lag on the watch: a full-screen GPU blur on the album backdrop was replaced by a one-time
+  32 px shrink that is stretched smoothly, and `PhoneRelaySource.processIcons` no longer
+  logs a cast exception for the non-asset `iconsRev` key.
+
 
 ## [v1.0.6] - 2026-09-18
 

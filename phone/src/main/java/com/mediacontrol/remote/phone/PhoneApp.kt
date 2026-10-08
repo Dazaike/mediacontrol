@@ -11,6 +11,7 @@ import com.google.android.gms.wearable.Asset
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import com.mediacontrol.remote.data.BluetoothAudioMonitor
+import com.mediacontrol.remote.data.SessionAction
 import com.mediacontrol.remote.data.ControlledSession
 import com.mediacontrol.remote.data.MediaRemoteRepository
 import com.mediacontrol.remote.data.RepoHost
@@ -45,6 +46,7 @@ class PhoneApp : Application(), RepoHost {
     private var lastArtBytes: ByteArray? = null
     private var lastArtAsset: Asset? = null
     val soundcore: SoundcoreController by lazy { SoundcoreController(this, btMonitor) }
+    val lyrics: LyricsService by lazy { LyricsService(this, repo, scope) }
     @Volatile private var soundcoreStatus = SoundcoreStatus(null, "")
     @Volatile private var lastAppsKey: String? = null
     @Volatile private var relayJob: Job? = null
@@ -73,6 +75,9 @@ class PhoneApp : Application(), RepoHost {
         scope.launch(job) {
             btMonitor.state.collect { pushState(repo.activeSession.value) }
         }
+        scope.launch(job) {
+            repo.customActions.collect { pushActions(it) }
+        }
     }
 
     /** Stops pushing state to the watch. Called when the watch unsubscribes. */
@@ -83,8 +88,24 @@ class PhoneApp : Application(), RepoHost {
         relayJob = null
         job.cancel()
         btMonitor.stop()
+        lyrics.setActive(false)
         lastPushKey = null
         lastAppsKey = null
+    }
+
+    /** Mirrors the session's custom actions (and their icons) to the watch. */
+    private suspend fun pushActions(actions: List<SessionAction>) {
+        try {
+            val req = PutDataMapRequest.create(RelayProtocol.PATH_MEDIA_ACTIONS)
+            req.dataMap.putStringArrayList(RelayProtocol.KEY_ACT_IDS, ArrayList(actions.map { it.id }))
+            req.dataMap.putStringArrayList(RelayProtocol.KEY_ACT_LABELS, ArrayList(actions.map { it.label }))
+            actions.forEachIndexed { i, a ->
+                a.icon?.let { req.dataMap.putAsset(RelayProtocol.KEY_ACT_ICON_PREFIX + i, Asset.createFromBytes(it)) }
+            }
+            Wearable.getDataClient(this).putDataItem(req.asPutDataRequest().setUrgent()).await()
+        } catch (e: Exception) {
+            Log.e(TAG, "pushActions failed: ${e.message}")
+        }
     }
 
     fun handleCommand(cmd: RelayCommand) {
@@ -146,6 +167,13 @@ class PhoneApp : Application(), RepoHost {
                     // Explicit refresh must republish even when the set is unchanged.
                     lastAppsKey = null
                     pushAppCatalog()
+                }
+                is RelayCommand.RequestLyrics -> lyrics.request(cmd.provider)
+                is RelayCommand.LyricsActive -> lyrics.setActive(cmd.active)
+                is RelayCommand.LyricsAck -> lyrics.onAck(cmd.stamp)
+                is RelayCommand.RunAction -> {
+                    val ok = repo.runCustomAction(cmd.id)
+                    Log.i(TAG, "custom action ${cmd.id} ok=$ok")
                 }
             }
         }

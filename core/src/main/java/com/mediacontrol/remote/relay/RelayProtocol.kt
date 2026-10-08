@@ -1,5 +1,6 @@
 package com.mediacontrol.remote.relay
 
+import com.mediacontrol.remote.lyrics.LyricsProvider
 import com.mediacontrol.remote.soundcore.SoundcoreMode
 
 /**
@@ -55,6 +56,25 @@ object RelayProtocol {
     // can show real app icons for packages it does not have installed itself.
     const val PATH_APP_ICONS = "/media-app-icons"
     const val KEY_ICONS_REV = "iconsRev"
+
+    // Lyrics: phone scrapes providers, ships a compact Asset phone→watch (DataItem), and
+    // streams playback position as Messages while the watch's lyrics page is open.
+    const val PATH_LYRICS = "/lyrics"
+    const val PATH_LYRICS_SYNC = "/lyrics-sync"
+    const val KEY_LYRICS_TRACK = "lyTrack"
+    const val KEY_LYRICS_REQUESTED = "lyReq"
+    const val KEY_LYRICS_PROVIDER = "lyProv"
+    /** Asset; absent means no lyrics were found. */
+    const val KEY_LYRICS_PAYLOAD = "lyData"
+    /** Wall-clock stamp so every response is a changed DataItem. */
+    const val KEY_LYRICS_TS = "lyTs"
+
+    // Player-specific controls (favourite, shuffle, ...): the phone mirrors the active
+    // session's PlaybackState custom actions; icons ride as one Asset per action.
+    const val PATH_MEDIA_ACTIONS = "/media-actions"
+    const val KEY_ACT_IDS = "actIds"
+    const val KEY_ACT_LABELS = "actLabels"
+    const val KEY_ACT_ICON_PREFIX = "actIcon"
 }
 
 /**
@@ -77,6 +97,11 @@ sealed class RelayCommand {
     object RequestApps : RelayCommand()
     object Subscribe : RelayCommand()
     object Unsubscribe : RelayCommand()
+    data class RequestLyrics(val provider: LyricsProvider) : RelayCommand()
+    data class LyricsActive(val active: Boolean) : RelayCommand()
+    /** Watch echo of a beacon's stamp, so the phone can time the round trip on its own clock. */
+    data class LyricsAck(val stamp: Long) : RelayCommand()
+    data class RunAction(val id: String) : RelayCommand()
 
     companion object {
         fun decode(bytes: ByteArray): RelayCommand? = try {
@@ -101,6 +126,15 @@ sealed class RelayCommand {
                 "reqApps" -> RequestApps
                 "subscribe" -> Subscribe
                 "unsubscribe" -> Unsubscribe
+                "lyrics" -> arg?.let { a -> runCatching { LyricsProvider.valueOf(a) }.getOrNull() }
+                    ?.let { RequestLyrics(it) }
+                "action" -> arg?.takeIf { it.isNotEmpty() }?.let { RunAction(it) }
+                "lyricsAck" -> arg?.toLongOrNull()?.let { LyricsAck(it) }
+                "lyricsActive" -> when (arg) {
+                    "1" -> LyricsActive(true)
+                    "0" -> LyricsActive(false)
+                    else -> null
+                }
                 else -> null
             }
         } catch (e: Exception) {
@@ -126,6 +160,45 @@ fun RelayCommand.encode(): ByteArray {
         is RelayCommand.RequestApps -> "reqApps"
         is RelayCommand.Subscribe -> "subscribe"
         is RelayCommand.Unsubscribe -> "unsubscribe"
+        is RelayCommand.RequestLyrics -> "lyrics|${provider.name}"
+        is RelayCommand.LyricsActive -> "lyricsActive|${if (active) 1 else 0}"
+        is RelayCommand.LyricsAck -> "lyricsAck|$stamp"
+        is RelayCommand.RunAction -> "action|$id"
     }
     return text.toByteArray(Charsets.UTF_8)
+}
+
+/**
+ * Phone→watch position beacon for lyrics: `posMs|playing(1/0)|latencyMs|stamp|trackKey`.
+ * [latencyMs] is the phone's running estimate of one-way delivery time (half the measured
+ * round trip of earlier beacons), which the watch adds to [posMs] while playing; [stamp] is
+ * a phone-clock value the watch echoes back in [RelayCommand.LyricsAck].
+ */
+data class LyricsSyncMsg(
+    val posMs: Long,
+    val playing: Boolean,
+    val latencyMs: Long,
+    val stamp: Long,
+    val trackKey: String,
+)
+
+fun encodeLyricsSync(msg: LyricsSyncMsg): ByteArray =
+    "${msg.posMs}|${if (msg.playing) 1 else 0}|${msg.latencyMs}|${msg.stamp}|${msg.trackKey}"
+        .toByteArray(Charsets.UTF_8)
+
+fun decodeLyricsSync(bytes: ByteArray): LyricsSyncMsg? = try {
+    val parts = String(bytes, Charsets.UTF_8).split('|', limit = 5)
+    val pos = parts.getOrNull(0)?.toLongOrNull()
+    val playing = when (parts.getOrNull(1)) {
+        "1" -> true
+        "0" -> false
+        else -> null
+    }
+    val latency = parts.getOrNull(2)?.toLongOrNull()
+    val stamp = parts.getOrNull(3)?.toLongOrNull()
+    val key = parts.getOrNull(4)
+    if (pos == null || playing == null || latency == null || stamp == null || key == null) null
+    else LyricsSyncMsg(pos, playing, latency, stamp, key)
+} catch (e: Exception) {
+    null
 }

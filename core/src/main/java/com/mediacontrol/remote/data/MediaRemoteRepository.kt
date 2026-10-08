@@ -1,5 +1,7 @@
 package com.mediacontrol.remote.data
 
+import android.graphics.Canvas
+import androidx.core.content.res.ResourcesCompat
 import android.graphics.Bitmap
 import java.io.ByteArrayOutputStream
 import android.content.ComponentName
@@ -111,6 +113,11 @@ class MediaRemoteRepository(private val appContext: Context) {
     // Every live session with a playback state; feeds the Players screen.
     private val _liveSessions = MutableStateFlow<List<SessionCandidate>>(emptyList())
     val liveSessions: StateFlow<List<SessionCandidate>> = _liveSessions.asStateFlow()
+
+    // Custom actions (favourite, shuffle, ...) of the attached session, with rendered icons.
+    private val _customActions = MutableStateFlow<List<SessionAction>>(emptyList())
+    val customActions: StateFlow<List<SessionAction>> = _customActions.asStateFlow()
+    private val actionIconCache = HashMap<String, ByteArray?>()
 
     private var attachedPackage: String? = null
     private var media3: MediaController? = null
@@ -316,6 +323,13 @@ class MediaRemoteRepository(private val appContext: Context) {
         if (c3 != null) c3.seekTo(positionMs) else fw!!.transportControls.seekTo(positionMs)
     }
 
+    /** Fires the session's own custom action [id], passing along the extras it declared. */
+    suspend fun runCustomAction(id: String): Boolean = dispatch { _, fw ->
+        val controller = fw!!
+        val action = controller.playbackState?.customActions?.firstOrNull { it.action == id }
+        controller.transportControls.sendCustomAction(id, action?.extras)
+    }
+
     private suspend fun dispatch(block: (MediaController?, FrameworkController?) -> Unit): Boolean =
         withContext(Dispatchers.Main.immediate) {
             val c3 = media3?.takeIf { it.isConnected }
@@ -397,6 +411,8 @@ class MediaRemoteRepository(private val appContext: Context) {
         cachedArtBytes = null
         cachedArtGen = -1
         _activeSession.value = null
+        _customActions.value = emptyList()
+        actionIconCache.clear()
     }
 
     private fun emitPlaying(playing: Boolean) {
@@ -418,7 +434,74 @@ class MediaRemoteRepository(private val appContext: Context) {
         _activeSession.value = next
     }
 
+    /**
+     * Current playback position extrapolated from the controller's own clock. Unlike
+     * [activeSession] this is exact between publishes (position-only ticks are dropped
+     * there), so it is the lyrics clock source. Null when nothing is attached.
+     */
+    fun livePositionMs(): Long? {
+        val session = _activeSession.value ?: return null
+        val live = try {
+            framework?.playbackState?.extrapolatedPosition()
+        } catch (e: Exception) {
+            null
+        }
+        if (live != null) return live
+        val elapsed = if (lastPublishAt == 0L) 0L else SystemClock.elapsedRealtime() - lastPublishAt
+        return interpolatePlaybackPosition(session.positionMs, session.isPlaying, elapsed, session.durationMs)
+    }
+
+    private fun updateCustomActions() {
+        val next = try {
+            val controller = framework
+            val pkg = controller?.packageName
+            controller?.playbackState?.customActions?.take(MAX_CUSTOM_ACTIONS)?.mapNotNull { a ->
+                val id = a.action?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                SessionAction(id, a.name?.toString().orEmpty().ifEmpty { id }, pkg?.let { actionIcon(it, a.icon) })
+            }
+        } catch (e: Exception) {
+            null
+        } ?: emptyList()
+        if (next != _customActions.value) _customActions.value = next
+    }
+
+    /**
+     * Renders a session's action icon from the owning app's resources. Monochrome icons
+     * (the norm for notification-style glyphs) are normalised to white so they read on the
+     * watch's dark UI whatever colour the app drew them in; coloured icons pass through.
+     */
+    private fun actionIcon(pkg: String, resId: Int): ByteArray? {
+        val key = "$pkg#$resId"
+        if (actionIconCache.containsKey(key)) return actionIconCache[key]
+        val bytes = try {
+            val res = appContext.packageManager.getResourcesForApplication(pkg)
+            val drawable = ResourcesCompat.getDrawable(res, resId, null) ?: return null
+            val bmp = Bitmap.createBitmap(ACTION_ICON_PX, ACTION_ICON_PX, Bitmap.Config.ARGB_8888)
+            drawable.setBounds(0, 0, ACTION_ICON_PX, ACTION_ICON_PX)
+            drawable.draw(Canvas(bmp))
+            val px = IntArray(ACTION_ICON_PX * ACTION_ICON_PX)
+            bmp.getPixels(px, 0, ACTION_ICON_PX, 0, 0, ACTION_ICON_PX, ACTION_ICON_PX)
+            val colourful = px.any { p ->
+                val alpha = p ushr 24
+                val r = (p shr 16) and 0xFF
+                val g = (p shr 8) and 0xFF
+                val b = p and 0xFF
+                alpha > 32 && maxOf(r, g, b) - minOf(r, g, b) > 40
+            }
+            if (!colourful) {
+                for (i in px.indices) px[i] = (px[i] and 0xFF000000.toInt()) or 0x00FFFFFF
+                bmp.setPixels(px, 0, ACTION_ICON_PX, 0, 0, ACTION_ICON_PX, ACTION_ICON_PX)
+            }
+            ByteArrayOutputStream().also { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+        } catch (e: Exception) {
+            null
+        }
+        actionIconCache[key] = bytes
+        return bytes
+    }
+
     private fun publishSnapshot() {
+        updateCustomActions()
         val snap = try {
             framework?.toSnapshot()
         } catch (e: Exception) {
@@ -575,6 +658,8 @@ class MediaRemoteRepository(private val appContext: Context) {
 }
 
 private const val ArtworkMaxPx = 480
+private const val MAX_CUSTOM_ACTIONS = 8
+private const val ACTION_ICON_PX = 48
 
 private fun scaleArtwork(raw: Bitmap): Bitmap {
     val maxDim = maxOf(raw.width, raw.height)
